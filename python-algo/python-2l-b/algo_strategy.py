@@ -51,8 +51,10 @@ class AlgoStrategy(gamelib.AlgoCore):
 
         REFUND_THRESHOLD_WALL = 0.7
         REFUND_THRESHOLD_TURRET = 0.5
-        with open(os.path.join(os.path.dirname(__file__), 'defense-order.json'), 'r') as f:
+        with open(os.path.join(os.path.dirname(__file__), 'build-order.json'), 'r') as f:
             self.build_order = json.loads(f.read())
+        with open(os.path.join(os.path.dirname(__file__), 'upgrade-order.json'), 'r') as f:
+            self.upgrade_order = json.loads(f.read())
 
         ENEMY_EDGE_DEFENSE_LOCATIONS_LEFT = [[0, 14], [1, 14], [2, 14], [3, 14], [4, 14], [1, 15], [2, 15], [3, 15], [2, 16], [3, 16]]
         ENEMY_EDGE_DEFENSE_LOCATIONS_RIGHT = [[27, 14], [26, 14], [25, 14], [24, 14], [23, 14], [26, 15], [25, 15], [24, 15], [25, 16], [24, 16]]
@@ -219,49 +221,59 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def build_default_defences(self, game_state):
         """
-        Build and patch defenses
+        Build and patch defenses based on priority levels, then process upgrades.
         """
         stop_flag = False
 
-        for job_list in self.build_order:
-          
+        # 1. Process Spawns by Priority
+        # We iterate in this specific order to ensure resources are spent on important units first
+        for priority in ["highest", "high","medium", "low", "lowest"]:
             if stop_flag:
                 break
+            
+            # Get the list for the current priority, default to empty list if key missing
+            job_list = self.build_order.get(priority, [])
 
             for build_job in job_list:
-                if build_job["type"] == "spawn":
-                    unit = eval(build_job["unit"])
-                    location = build_job["location"]
-                    
-                    if self.turn_strategy == "attack_left" and location == ATTACK_LEFT_REMOVE_WALL_LOCATION:
-                        if self.attack_turn == 0:
-                            game_state.attempt_remove(ATTACK_LEFT_REMOVE_WALL_LOCATION)
-                        continue # Added continue to successfully skip respawning the removed wall
-                        
-                    if self.turn_strategy == "attack_right" and location == ATTACK_RIGHT_REMOVE_WALL_LOCATION:
-                        if self.attack_turn == 0:
-                            game_state.attempt_remove(ATTACK_RIGHT_REMOVE_WALL_LOCATION)
-                        continue # Added continue to successfully skip respawning the removed wall
-                        
-                    if game_state.get_resource(SP) - game_state.type_cost(unit)[0] < self.min_sp_to_save: # not enough structure points
-                        stop_flag = True
-                        break
-                    is_spawned = game_state.attempt_spawn(unit, location)
+                unit = eval(build_job["unit"])
+                location = build_job["location"]
 
-                elif build_job["type"] == "upgrade":
-                    unit = eval(build_job["unit"])
-                    location = build_job["location"]
+                # Logic for removing walls for specific attack strategies
+                if self.turn_strategy == "attack_left" and location == ATTACK_LEFT_REMOVE_WALL_LOCATION:
+                    if self.attack_turn == 0:
+                        game_state.attempt_remove(ATTACK_LEFT_REMOVE_WALL_LOCATION)
+                    continue 
                     
-                    if self.turn_strategy == "attack_left" and location == ATTACK_LEFT_REMOVE_WALL_LOCATION:
-                        continue # Also skip any queued upgrades in case the wall was just removed
-                    if self.turn_strategy == "attack_right" and location == ATTACK_RIGHT_REMOVE_WALL_LOCATION:
-                        continue 
-                        
-                    if game_state.get_resource(SP) - game_state.type_cost(unit, upgrade=True)[0] < self.min_sp_to_save:
-                        stop_flag = True
-                        break
-                    is_upgraded = game_state.attempt_upgrade(location)
+                if self.turn_strategy == "attack_right" and location == ATTACK_RIGHT_REMOVE_WALL_LOCATION:
+                    if self.attack_turn == 0:
+                        game_state.attempt_remove(ATTACK_RIGHT_REMOVE_WALL_LOCATION)
+                    continue 
 
+                # Resource check: Cost of spawning
+                if game_state.get_resource(SP) - game_state.type_cost(unit)[0] < self.min_sp_to_save:
+                    stop_flag = True
+                    break
+
+                game_state.attempt_spawn(unit, location)
+
+        # 2. Process Upgrades
+        # This assumes you have loaded the separate upgrade JSON into self.upgrade_order
+        if not stop_flag:
+            for upgrade_job in self.upgrade_order:
+                unit = eval(upgrade_job["unit"])
+                location = upgrade_job["location"]
+
+                # Skip upgrades for walls that are being removed for the attack
+                if self.turn_strategy == "attack_left" and location == ATTACK_LEFT_REMOVE_WALL_LOCATION:
+                    continue
+                if self.turn_strategy == "attack_right" and location == ATTACK_RIGHT_REMOVE_WALL_LOCATION:
+                    continue
+
+                # Resource check: Cost of upgrading
+                if game_state.get_resource(SP) - game_state.type_cost(unit, upgrade=True)[0] < self.min_sp_to_save:
+                    break # Stop upgrading if we run out of SP
+                
+                game_state.attempt_upgrade(location)
 
     def execute_turn_strategy(self, game_state):
         if self.turn_strategy == "defend":
@@ -285,6 +297,66 @@ class AlgoStrategy(gamelib.AlgoCore):
             if second_group_size > 0:
                 self.spawn_scouts(game_state, ATTACK_RIGHT_SCOUT_SECOND_GROUP_LOCATION, second_group_size)
 
+
+    def execute_scout_rush(self, game_state):
+        """
+        Bomb rush the gap in defense using Scouts.
+        """
+        mp = int(game_state.get_resource(MP))
+        
+        # Wait until we have enough MP to make the rush effective (e.g., 12+ MP)
+        if mp >= 5:
+            best_location = self.find_best_scout_spawn(game_state)
+            
+            # Spend all available MP on scouts at the most optimal location
+            game_state.attempt_spawn(SCOUT, best_location, 1000)
+            gamelib.debug_write(f"Scout rush deployed at {best_location} with {mp} MP")
+
+    def find_best_scout_spawn(self, game_state):
+        """
+        Simulate pathing from all valid edge locations to find the path that takes 
+        the LEAST damage from enemy turrets. Defaults to corners.
+        """
+        # Get all friendly deployable edges
+        friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
+        
+        # Filter out edges that we blocked with our own walls/turrets
+        deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
+        
+        # Default fallback corners
+        default_corners = [[13, 0], [14, 0]]
+        
+        if not deploy_locations:
+            return random.choice(default_corners)
+
+        best_location = None
+        lowest_damage = float('inf')
+        
+        # Turret damage reference
+        turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
+
+        for loc in deploy_locations:
+            path = game_state.find_path_to_edge(loc)
+            damage_taken = 0
+            
+            for path_location in path:
+                # Count how many enemy turrets can attack this specific tile
+                attackers = game_state.get_attackers(path_location, 0) # 0 is our player index
+                damage_taken += len(attackers) * turret_damage
+                
+            if damage_taken < lowest_damage:
+                lowest_damage = damage_taken
+                best_location = loc
+                
+        # If the lowest damage path still gets absolutely melted (e.g., heavily fortified board),
+        # or if the board is empty and damage is 0 everywhere, default to the corners.
+        if lowest_damage == 0 or lowest_damage > (turret_damage * 10): 
+            # Make sure our default corners aren't blocked by our own defenses
+            valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
+            if valid_corners:
+                return random.choice(valid_corners)
+                
+        return best_location
 
     def spawn_interceptor(self, game_state, location, number):
         game_state.attempt_spawn(INTERCEPTOR, location, math.floor(number))
