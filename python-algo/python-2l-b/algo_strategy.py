@@ -353,12 +353,8 @@ class AlgoStrategy(gamelib.AlgoCore):
                 best_location = loc
                 
         # If no damage is taken or if no path returns anything, default back to corner paths
-        if best_location is None or lowest_damage == 0: 
-            valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
-            if valid_corners:
-                best_location = random.choice(valid_corners)
-            else:
-                best_location = random.choice(default_corners)
+        if best_location is None:
+            best_location = random.choice(default_corners)
                 
         return best_location, lowest_damage
 

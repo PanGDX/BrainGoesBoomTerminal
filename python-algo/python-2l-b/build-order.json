@@ -17,6 +17,12 @@
   "frontline" : [
 	{ "type": "spawn", "unit": "WALL", "location": [0, 13] },
 	{ "type": "spawn", "unit": "WALL", "location": [27, 13] },
+  { "type": "spawn", "unit": "WALL", "location": [1, 13] },
+  { "type": "spawn", "unit": "WALL", "location": [26, 13] },
+  { "type": "spawn", "unit": "WALL", "location": [2, 13] },
+  { "type": "spawn", "unit": "WALL", "location": [25, 13] },
+  { "type": "spawn", "unit": "WALL", "location": [3, 13] },
+  { "type": "spawn", "unit": "WALL", "location": [24, 13] },
 	{ "type": "spawn", "unit": "TURRET", "location": [1, 13] },
 	{ "type": "spawn", "unit": "TURRET", "location": [26, 13] },
 	{ "type": "spawn", "unit": "TURRET", "location": [3, 13] },
