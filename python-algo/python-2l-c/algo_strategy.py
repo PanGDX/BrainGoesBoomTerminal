@@ -108,6 +108,14 @@ class AlgoStrategy(gamelib.AlgoCore):
 
         self.min_sp_to_save = 0 # at least this amount of SP left in case need to repair for next turn
 
+        # Aggressive-attack trigger: when enemy lost ≥60% of supports last turn,
+        # commit all MP as scouts at the weakest enemy spawn-cell next turn
+        # (predicting they'll spend SP rebuilding supports instead of defenses).
+        self.last_enemy_support_count = 0
+        self.aggressive_attack = False
+        self.AGGRESSIVE_ATTACK_LOSS_RATIO = 0.60
+        self.AGGRESSIVE_ATTACK_MIN_PRIOR = 3  # need ≥3 supports last turn to trigger
+
 
     def on_turn(self, turn_state):
         """
@@ -118,9 +126,35 @@ class AlgoStrategy(gamelib.AlgoCore):
         game engine.
         """
         game_state = gamelib.GameState(self.config, turn_state)
+        self._update_aggressive_attack_trigger(game_state)
         self.starter_strategy(game_state)
 
         game_state.submit_turn()
+
+    def _count_enemy_supports(self, game_state):
+        """Count enemy SUPPORT structures currently on the board."""
+        count = 0
+        for x in range(28):
+            y_max = x + 14 if x < 14 else 41 - x
+            for y in range(14, y_max + 1):
+                unit = game_state.contains_stationary_unit([x, y])
+                if unit and unit.player_index == 1 and unit.unit_type == SUPPORT:
+                    count += 1
+        return count
+
+    def _update_aggressive_attack_trigger(self, game_state):
+        """Compare current enemy support count vs last turn's; if loss ≥60%, fire trigger."""
+        current = self._count_enemy_supports(game_state)
+        if (self.last_enemy_support_count >= self.AGGRESSIVE_ATTACK_MIN_PRIOR
+                and current < self.last_enemy_support_count):
+            loss = (self.last_enemy_support_count - current) / self.last_enemy_support_count
+            if loss >= self.AGGRESSIVE_ATTACK_LOSS_RATIO:
+                self.aggressive_attack = True
+                gamelib.debug_write(
+                    f"AGGRESSIVE-ATTACK trigger: enemy supports {self.last_enemy_support_count}→{current} "
+                    f"(loss={loss:.0%})"
+                )
+        self.last_enemy_support_count = current
 
 
     def starter_strategy(self, game_state):
@@ -322,9 +356,21 @@ class AlgoStrategy(gamelib.AlgoCore):
         Demolisher + Scout strategy.
         """
         mp = int(game_state.get_resource(MP))
-        
+
         # We need at least 5 MP for any rush to be effective
         if mp < 5:
+            return
+
+        # Aggressive-attack override: enemy lost ≥60% of supports last turn → predict
+        # they'll spend SP rebuilding instead of defending. Commit all MP at the path
+        # of least defensive damage; skip funnel analysis.
+        if self.aggressive_attack:
+            best_scout_location, _ = self.find_best_scout_spawn(game_state)
+            game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
+            gamelib.debug_write(
+                f"AGGRESSIVE-ATTACK fired: {mp} scouts at {best_scout_location}"
+            )
+            self.aggressive_attack = False
             return
 
         # Find the best path for a pure scout rush and observe anticipated damage
