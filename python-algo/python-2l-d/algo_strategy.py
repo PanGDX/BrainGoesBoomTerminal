@@ -130,6 +130,12 @@ class AlgoStrategy(gamelib.AlgoCore):
         self._pending_enemy_spawns = set()    # accumulates during current turn
         self.last_turn_enemy_spawns = set()   # snapshot used this turn
 
+        # Support-attack failure tracker: if 3 consecutive scout rushes fail
+        # to destroy any enemy support, switch attack routing to pure min-damage.
+        self.support_attack_attempts_since_kill = 0
+        self.disable_support_targeting = False
+        self.MAX_SUPPORT_ATTACK_ATTEMPTS = 3
+
 
     def on_turn(self, turn_state):
         """
@@ -173,8 +179,16 @@ class AlgoStrategy(gamelib.AlgoCore):
         return count
 
     def _update_aggressive_attack_trigger(self, game_state):
-        """Compare current enemy support count vs last turn's; if loss ≥60%, fire trigger."""
+        """Compare current enemy support count vs last turn's; if loss ≥60%, fire
+        AGGRESSIVE trigger. Also reset the support-attack-failure counter any
+        time a support gets destroyed (we can attribute the kill to our attack)."""
         current = self._count_enemy_supports(game_state)
+        if current < self.last_enemy_support_count:
+            # At least one enemy support destroyed since last turn → reset failure tracking.
+            self.support_attack_attempts_since_kill = 0
+            if self.disable_support_targeting:
+                gamelib.debug_write("support-targeting re-enabled (support kill detected)")
+            self.disable_support_targeting = False
         if (self.last_enemy_support_count >= self.AGGRESSIVE_ATTACK_MIN_PRIOR
                 and current < self.last_enemy_support_count):
             loss = (self.last_enemy_support_count - current) / self.last_enemy_support_count
@@ -350,7 +364,7 @@ class AlgoStrategy(gamelib.AlgoCore):
     def execute_scout_rush(self, game_state):
         """
         Bomb rush the gap in defense using Scouts.
-        If the path is too heavily defended, save up MP and use the alternative 
+        If the path is too heavily defended, save up MP and use the alternative
         Demolisher + Scout strategy.
         """
         mp = int(game_state.get_resource(MP))
@@ -358,6 +372,17 @@ class AlgoStrategy(gamelib.AlgoCore):
         # We need at least 5 MP for any rush to be effective
         if mp < 5:
             return
+
+        # Count this rush as a support-attack attempt. The _update_aggressive_attack_trigger
+        # will reset the counter next turn if a support got destroyed.
+        self.support_attack_attempts_since_kill += 1
+        if (self.support_attack_attempts_since_kill >= self.MAX_SUPPORT_ATTACK_ATTEMPTS
+                and not self.disable_support_targeting):
+            self.disable_support_targeting = True
+            gamelib.debug_write(
+                f"support-targeting disabled after {self.support_attack_attempts_since_kill} "
+                f"failed attempts — switching to min-damage routing"
+            )
 
         # Aggressive-attack override: enemy lost ≥60% of supports last turn → predict
         # they'll spend SP rebuilding instead of defending. Commit all MP at the path
@@ -446,7 +471,9 @@ class AlgoStrategy(gamelib.AlgoCore):
             return random.choice(default_corners), float('inf')
 
         turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
-        enemy_supports = self._enemy_support_locations(game_state)
+        # If support targeting has been disabled (3 failed attacks), skip the
+        # support-bonus logic entirely and route purely by min-damage.
+        enemy_supports = [] if self.disable_support_targeting else self._enemy_support_locations(game_state)
 
         best_location = None
         best_score = float('inf')
