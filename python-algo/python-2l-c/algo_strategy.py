@@ -6,6 +6,8 @@ from sys import maxsize
 import json
 import os
 
+from turret_placer import place_turrets
+
 """
 Most of the algo code you write will be in this file unless you create new
 modules yourself. Start by modifying the 'on_turn' function.
@@ -18,6 +20,15 @@ Advanced strategy tips:
   board states. Though, we recommended making a copy of the map to preserve 
   the actual current map state.
 """
+
+# Anchor turrets — these are spawned by the build-order `start` tier and
+# treated by the placer as already-present (their coverage seeds the map).
+# Must match the TURRET entries in build-order.json `start` tier.
+ANCHOR_TURRETS = [
+    (6, 13), (12, 12), (13, 13), (14, 13), (15, 12),
+    (21, 13), (2, 12), (25, 12),
+]
+TURRET_SCORING_MODE = "path_freq"  # one of: "gap_fill", "stacking", "path_freq"
 
 class AlgoStrategy(gamelib.AlgoCore):
     def __init__(self):
@@ -194,6 +205,17 @@ class AlgoStrategy(gamelib.AlgoCore):
     def build_defences(self, game_state):
         self.refund_low_health_structures(game_state)
         self.build_default_defences(game_state)
+        result = place_turrets(
+            game_state,
+            anchor_locations=ANCHOR_TURRETS,
+            turret_shorthand=TURRET,
+            scoring=TURRET_SCORING_MODE,
+        )
+        gamelib.debug_write(
+            f"placer: placed={len(result['placed'])} "
+            f"upgraded={len(result['upgraded'])} "
+            f"stop={result['stopped_reason']}"
+        )
 
 
     def enumerate_friendly_side_locations(self, game_state):
