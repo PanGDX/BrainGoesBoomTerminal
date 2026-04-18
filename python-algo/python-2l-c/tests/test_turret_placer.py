@@ -1,5 +1,5 @@
 import pytest
-from turret_placer import depth_factor, in_range, tile_weight, score_placement, score_upgrade, compute_threat_surface
+from turret_placer import depth_factor, in_range, tile_weight, score_placement, score_upgrade, compute_threat_surface, candidate_cells
 
 
 @pytest.mark.parametrize("y,expected", [
@@ -239,3 +239,38 @@ def test_compute_threat_surface_increments_shared_tiles():
     gs = _StubGameState(edges, paths)
     threat = compute_threat_surface(gs)
     assert threat[(5, 13)] == 2
+
+
+class _StubGameStateOccupancy:
+    def __init__(self, occupied):
+        self._occupied = {tuple(c) for c in occupied}
+
+    def contains_stationary_unit(self, loc):
+        return tuple(loc) in self._occupied
+
+
+def test_candidate_cells_returns_only_upper_half_diamond():
+    gs = _StubGameStateOccupancy(occupied=[])
+    cells = candidate_cells(gs)
+    # Spot-check: the arena is a diamond. At y=13 our row is x in [0,27]; at y=8 it shrinks.
+    assert (0, 13) in cells
+    assert (27, 13) in cells
+    # y=7 is excluded (below upper half)
+    assert (10, 7) not in cells
+    # y=14 is enemy side
+    assert (10, 14) not in cells
+
+
+def test_candidate_cells_excludes_occupied():
+    gs = _StubGameStateOccupancy(occupied=[[10, 13], [11, 12]])
+    cells = candidate_cells(gs)
+    assert (10, 13) not in cells
+    assert (11, 12) not in cells
+    assert (12, 12) in cells  # neighbor still candidate
+
+
+def test_candidate_cells_y_range_strict():
+    gs = _StubGameStateOccupancy(occupied=[])
+    cells = candidate_cells(gs)
+    ys = {y for (_, y) in cells}
+    assert ys == {8, 9, 10, 11, 12, 13}

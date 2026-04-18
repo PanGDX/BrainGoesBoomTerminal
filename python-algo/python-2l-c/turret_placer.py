@@ -114,3 +114,32 @@ def compute_threat_surface(game_state):
                     key = (x, y)
                     threat_count[key] = threat_count.get(key, 0) + 1
     return threat_count
+
+
+ARENA_SIZE = 28
+HALF_ARENA = 14
+
+
+def _enumerate_friendly_diamond():
+    """Generator over every (x, y) inside the friendly half-diamond, y in [0, 13]."""
+    for x in range(ARENA_SIZE):
+        if x < HALF_ARENA:
+            for y in range(HALF_ARENA - x - 1, HALF_ARENA):
+                yield (x, y)
+        else:
+            for y in range(x - HALF_ARENA, HALF_ARENA):
+                yield (x, y)
+
+
+def candidate_cells(game_state):
+    """Empty cells inside the upper half of the friendly diamond, y in [8, 13]."""
+    y_lo, y_hi = UPPER_HALF_Y_RANGE
+    out = []
+    for cell in _enumerate_friendly_diamond():
+        x, y = cell
+        if y < y_lo or y > y_hi:
+            continue
+        if game_state.contains_stationary_unit(list(cell)):
+            continue
+        out.append(cell)
+    return out
