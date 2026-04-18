@@ -82,7 +82,9 @@ class AlgoStrategy(gamelib.AlgoCore):
         self.my_MP = 0
         self.enemy_MP = 0
         self.turn_strategy = "defend" # defend, attack_left, attack_right
-
+        self.enemy_spawns_left = 0
+        self.enemy_spawns_right = 0
+        self.favored_side = 'balanced'
         self.min_sp_to_save = 0 # at least this amount of SP left in case need to repair for next turn
 
         # enemy deployment insights
@@ -98,6 +100,21 @@ class AlgoStrategy(gamelib.AlgoCore):
         game engine.
         """
         game_state = gamelib.GameState(self.config, turn_state)
+
+        self.enemy_spawns_left *= 0.85
+        self.enemy_spawns_right *= 0.85
+        
+        # 2. Determine favored side for this turn
+        total = self.enemy_spawns_left + self.enemy_spawns_right
+        if total > 0:
+            left_ratio = self.enemy_spawns_left / total
+            if left_ratio > 0.6:
+                self.favored_side = 'left'
+            elif left_ratio < 0.4:
+                self.favored_side = 'right'
+            else:
+                self.favored_side = 'balanced'
+
         self.starter_strategy(game_state)
 
         game_state.submit_turn()
@@ -391,16 +408,32 @@ class AlgoStrategy(gamelib.AlgoCore):
                 for location in EDGE_BLOCK_LOCATIONS_LEFT:
                     game_state.attempt_remove(location)
     
-    def on_action_frame(self, turn_string):
-        state = json.loads(turn_string)
+    def on_action_frame(self, action_frame_game_state):
+        """
+        Intercepts action frames from the engine to catch enemy mobile unit spawns.
+        """
+        state = json.loads(action_frame_game_state)
+        
+        # phase_type == 1 (Action Phase), frame_number == 0 (Spawn Frame)
         if state["turnInfo"][0] == 1 and state["turnInfo"][2] == 0:
-            spawns = state["events"]["spawn"]
-            locations = set()
+            spawns = state.get("events", {}).get("spawn", [])
+            
             for spawn in spawns:
-                if spawn[1] == 3:
-                    locations.add(tuple(spawn[0]))
-            batch_count = min(3, len(locations))
-            self.batch_count_history[batch_count - 1] += 1
+                location = spawn[0]  # e.g., [20, 27]
+                unit_type = spawn[1] # 3=Scout, 4=Demolisher, 5=Interceptor
+                
+                # Check if it spawned on the enemy's side (y >= 14) and is a Scout (3)
+                if location[1] >= 14 and unit_type == 3:
+                    x, y = location
+                    # If x < 14, it spawned on the Top-Left edge (attacking our Left)
+                    if x < 14:
+                        self.enemy_spawns_left += 1
+                        gamelib.debug_write(f"Detected enemy scout spawn on LEFT at {location}")
+                    # Otherwise, it spawned on the Top-Right edge (attacking our Right)
+                    else:
+                        self.enemy_spawns_right += 1
+                        gamelib.debug_write(f"Detected enemy scout spawn on RIGHT at {location}")
+
 
 if __name__ == "__main__":
     algo = AlgoStrategy()

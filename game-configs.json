@@ -165,7 +165,7 @@
     "bitRampBitCapGrowthRate":5.0,
     "roundStartBitRamp":10,
     "bitGrowthRate":1.0,
-    "startingHP":40.0,
+    "startingHP":30.0,
     "maxBits":150.0,
     "bitsPerRound":5.0,
     "coresPerRound":5.0,
