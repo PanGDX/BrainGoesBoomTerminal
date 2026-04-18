@@ -15,14 +15,5 @@
   ],
   "frontline": [],
   "catchline": [],
-  "supportstructure": [
-    { "type": "spawn", "unit": "SUPPORT", "location": [13, 11] },
-    { "type": "upgrade", "unit": "SUPPORT", "location": [13, 11] },
-    { "type": "spawn", "unit": "SUPPORT", "location": [14, 11] },
-    { "type": "upgrade", "unit": "SUPPORT", "location": [14, 11] },
-    { "type": "spawn", "unit": "SUPPORT", "location": [13, 10] },
-    { "type": "upgrade", "unit": "SUPPORT", "location": [13, 10] },
-    { "type": "spawn", "unit": "SUPPORT", "location": [14, 10] },
-    { "type": "upgrade", "unit": "SUPPORT", "location": [14, 10] }
-  ]
+  "supportstructure": []
 }
