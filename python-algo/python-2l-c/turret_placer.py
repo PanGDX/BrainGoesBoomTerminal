@@ -162,3 +162,13 @@ def existing_turrets(game_state, turret_shorthand):
             continue
         out.append(cell)
     return out
+
+
+def init_coverage(threat_count, turret_locs, raw_range):
+    """Build coverage map: how many turrets currently cover each threat tile."""
+    cov = {tile: 0 for tile in threat_count}
+    for tile in cov:
+        for t in turret_locs:
+            if in_range(t, tile, raw_range):
+                cov[tile] += 1
+    return cov

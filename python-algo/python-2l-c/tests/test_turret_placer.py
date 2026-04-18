@@ -1,5 +1,5 @@
 import pytest
-from turret_placer import depth_factor, in_range, tile_weight, score_placement, score_upgrade, compute_threat_surface, candidate_cells, existing_turrets
+from turret_placer import depth_factor, in_range, tile_weight, score_placement, score_upgrade, compute_threat_surface, candidate_cells, existing_turrets, init_coverage
 
 
 class _Unit:
@@ -315,3 +315,26 @@ def test_existing_turrets_only_upper_half():
     result = existing_turrets(gs, turret_shorthand="TURRET")
     assert (10, 5) not in result
     assert (10, 13) in result
+
+
+def test_init_coverage_counts_anchors_in_range_of_threat():
+    threat = {(10, 13): 1, (11, 13): 1, (20, 13): 1}
+    anchors = [(10, 12)]  # in range of (10,13) and (11,13), not (20,13)
+    cov = init_coverage(threat, anchors, raw_range=2.5)
+    assert cov[(10, 13)] == 1
+    assert cov[(11, 13)] == 1
+    assert cov[(20, 13)] == 0
+
+
+def test_init_coverage_stacks_multiple_anchors():
+    threat = {(10, 13): 1}
+    anchors = [(10, 12), (11, 12)]  # both in range of (10,13)
+    cov = init_coverage(threat, anchors, raw_range=2.5)
+    assert cov[(10, 13)] == 2
+
+
+def test_init_coverage_initializes_uncovered_to_zero():
+    threat = {(10, 13): 1, (20, 13): 1}
+    anchors = []
+    cov = init_coverage(threat, anchors, raw_range=2.5)
+    assert cov == {(10, 13): 0, (20, 13): 0}
