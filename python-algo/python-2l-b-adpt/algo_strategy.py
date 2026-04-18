@@ -53,8 +53,8 @@ class AlgoStrategy(gamelib.AlgoCore):
         MP = 1
         SP = 0
 
-        REFUND_THRESHOLD_WALL = 0.7
-        REFUND_THRESHOLD_TURRET = 0.5
+        REFUND_THRESHOLD_WALL = 0.5
+        REFUND_THRESHOLD_TURRET = 0.2
         with open(os.path.join(os.path.dirname(__file__), 'build-order.json'), 'r') as f:
             self.build_order = json.loads(f.read())
         with open(os.path.join(os.path.dirname(__file__), 'upgrade-order.json'), 'r') as f:
@@ -261,7 +261,7 @@ class AlgoStrategy(gamelib.AlgoCore):
                 if path:
                     vulnerable_path_points.extend(path)
 
-        for priority in ["start", "frontline", "supportstructure"]:
+        for priority in ["start", "sides", "frontline", "catchline", "supportstructure"]:
             if stop_flag:
                 break
             
@@ -337,8 +337,6 @@ class AlgoStrategy(gamelib.AlgoCore):
     def execute_scout_rush(self, game_state):
         """
         Bomb rush the gap in defense using Scouts.
-        If the path is too heavily defended, save up MP and use the alternative 
-        Demolisher + Scout strategy.
         """
         mp = int(game_state.get_resource(MP))
         
@@ -349,53 +347,18 @@ class AlgoStrategy(gamelib.AlgoCore):
         # Find the best path for a pure scout rush and observe anticipated damage
         best_scout_location, lowest_damage = self.find_best_scout_spawn(game_state)
         
-        scout_health = gamelib.GameUnit(SCOUT, game_state.config).max_health
-        total_scout_health = mp * scout_health
+        # If lowest_damage is infinity, it means EVERY spawn location is walled in / stuck.
+        # We abort the spawn to prevent wasting MP on troops that will instantly self-destruct.
+        if lowest_damage == float('inf'):
+            gamelib.debug_write("All scout paths are stuck/blocked! Saving MP.")
+            return
 
-        
         game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
-        gamelib.debug_write(f"Scout rush deployed at {best_scout_location} with {mp} MP")
+        gamelib.debug_write(f"Scout rush deployed at {best_scout_location} with {mp} MP. Route damage: {lowest_damage}")
 
-
-    # def find_best_scout_spawn(self, game_state):
-    #     friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + \
-    #                      game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
-        
-    #     deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
-        
-    #     default_corners = [[13, 0], [14, 0]]
-        
-    #     if not deploy_locations:
-    #         return random.choice(default_corners), float('inf')
-
-    #     best_location = None
-    #     lowest_damage = float('inf')
-        
-    #     turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
-
-    #     for loc in deploy_locations:
-    #         path = game_state.find_path_to_edge(loc)
-    #         damage_taken = 0
-            
-    #         for path_location in path:
-    #             attackers = game_state.get_attackers(path_location, 0)
-    #             damage_taken += len(attackers) * turret_damage
-                
-    #         if damage_taken < lowest_damage:
-    #             lowest_damage = damage_taken
-    #             best_location = loc
-                
-    #     if best_location is None:
-    #         best_location = random.choice(default_corners)
-                
-    #     return best_location, lowest_damage
 
     def _enemy_support_locations(self, game_state):
-        """List of (x, y, upgraded) for every enemy SUPPORT on the board.
-
-        Iterates the enemy half-diamond (y in [14, 27]) and filters by player
-        index + unit type.
-        """
+        """List of (x, y, upgraded) for every enemy SUPPORT on the board."""
         out = []
         for x in range(28):
             y_max = x + 14 if x < 14 else 41 - x
@@ -408,60 +371,71 @@ class AlgoStrategy(gamelib.AlgoCore):
                 out.append((x, y, getattr(unit, "upgraded", False)))
         return out
 
+
     def find_best_scout_spawn(self, game_state):
         """
-        Pick the scout-spawn cell with the best score:
-            score = damage_taken − SUPPORT_TARGET_BONUS × supports_in_range
-        Lower score = better spawn. Returns (best_location, RAW damage_taken at that
-        spawn) so the funnel-trigger threshold sees real damage, not the adjusted score.
+        Calculates the safest route to the enemy edge.
+        Primary Objective: STRICTLY minimize damage taken.
+        Secondary Objective: If multiple paths take the exact same minimal damage, 
+                             pick the one that hits the most exposed supports.
         """
         friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + \
                          game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
 
         deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
         default_corners = [[13, 0], [14, 0]]
+        
         if not deploy_locations:
             return random.choice(default_corners), float('inf')
 
         turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
         enemy_supports = self._enemy_support_locations(game_state)
-
-        best_location = None
-        best_score = float('inf')
-        best_raw_damage = float('inf')
         SCOUT_ATTACK_RANGE = gamelib.GameUnit(SCOUT, game_state.config).attackRange
+
+        valid_paths = []
+
         for loc in deploy_locations:
             path = game_state.find_path_to_edge(loc)
+            
+            # ISSUE 1 FIX: If the path ends on our half of the board (y < 13), 
+            # the troop is stuck and will self-destruct. Discard this location.
+            if not path or path[-1][1] < 13:
+                continue
+                
             damage_taken = 0
-            supports_hit = set()  # dedupe across path tiles
+            supports_hit = set()
 
             for path_location in path:
                 attackers = game_state.get_attackers(path_location, 0)
                 damage_taken += len(attackers) * turret_damage
+                
                 for sx, sy, upgraded in enemy_supports:
                     if (sx, sy) in supports_hit:
                         continue
-                    if math.dist((path_location[0] + 0.5, path_location[1] + 0.5),
-                                 (sx + 0.5, sy + 0.5)) <= SCOUT_ATTACK_RANGE:
+                    # Check if support is within scout's attack range
+                    if math.sqrt((path_location[0] + 0.5 - (sx + 0.5))**2 + (path_location[1] + 0.5 - (sy + 0.5))**2) <= SCOUT_ATTACK_RANGE:
                         supports_hit.add((sx, sy))
 
-            support_bonus = 0
-            for sx, sy in supports_hit:
-                upgraded = next(u for ux, uy, u in enemy_supports if (ux, uy) == (sx, sy))
-                support_bonus += SUPPORT_TARGET_BONUS * (SUPPORT_TARGET_UPGRADED_MULT if upgraded else 1)
+            valid_paths.append({
+                'loc': loc,
+                'damage': damage_taken,
+                'supports': len(supports_hit)
+            })
 
-            score = damage_taken - support_bonus
-            if score < best_score:
-                best_score = score
-                best_location = loc
-                best_raw_damage = damage_taken
+        # ISSUE 2 & 3 FIX: Separate pure rushing from support hunting.
+        if valid_paths:
+            # We sort the list of valid paths. 
+            # 1st Priority: 'damage' ascending (Always prefer lowest damage).
+            # 2nd Priority: '-supports' ascending (which means supports descending, to break ties).
+            valid_paths.sort(key=lambda p: (p['damage'], -p['supports']))
+            
+            best_path = valid_paths[0]
+            return best_path['loc'], best_path['damage']
 
-        # Fallback: no path scored or every path is harmless AND has no supports — pick a corner.
-        if best_location is None or (best_raw_damage == 0 and best_score == 0):
-            valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
-            best_location = random.choice(valid_corners or default_corners)
+        # Fallback: Every single edge location is blocked/stuck.
+        valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
+        return random.choice(valid_corners or default_corners), float('inf')
 
-        return best_location, best_raw_damage
 
     def spawn_interceptor(self, game_state, location, number):
         game_state.attempt_spawn(INTERCEPTOR, location, math.floor(number))
