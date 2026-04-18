@@ -249,6 +249,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         turn_info = state.get("turnInfo", [])
         if len(turn_info) < 3 or turn_info[0] != 1 or turn_info[2] != 0:
             return
+        spawn_locs_this_turn = []
         for spawn in state.get("events", {}).get("spawn", []):
             if len(spawn) < 4:
                 continue
@@ -256,10 +257,13 @@ class AlgoStrategy(gamelib.AlgoCore):
             # unit_type 3=SCOUT, 4=DEMOLISHER, 5=INTERCEPTOR; player 2 = enemy
             if player != 2 or unit_type not in (3, 4, 5):
                 continue
+            spawn_locs_this_turn.append(tuple(location))
             if location[0] < 14:
                 self.enemy_spawn_left += 1
             else:
                 self.enemy_spawn_right += 1
+        if spawn_locs_this_turn:
+            gamelib.debug_write(f"enemy_spawns_this_turn: {spawn_locs_this_turn}")
 
 
     def enumerate_friendly_side_locations(self, game_state):

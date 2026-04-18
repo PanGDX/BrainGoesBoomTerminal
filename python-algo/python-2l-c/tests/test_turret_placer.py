@@ -508,3 +508,39 @@ def test_score_placement_applies_corner_and_tendency():
     coverage = {(1, 13): 0}
     score = score_placement((1, 13), threat, coverage, 2.5, "stacking", tendency=1.0)
     assert score == pytest.approx(0.90 * 1.5 * 1.5)
+
+
+from turret_placer import _effective_tendency, PARITY_OVERRIDE_RATIO
+
+
+def test_effective_tendency_no_override_when_balanced():
+    # Both sides equal → use attack_tendency as-is
+    assert _effective_tendency(5, 5, 0.7) == 0.7
+    assert _effective_tendency(5, 5, -0.4) == -0.4
+
+
+def test_effective_tendency_no_override_below_ratio():
+    # Imbalance < 1.5x → no override
+    assert _effective_tendency(6, 5, 0.5) == 0.5
+    assert _effective_tendency(7, 5, 0.5) == 0.5  # 7/5 = 1.4 < 1.5
+
+
+def test_effective_tendency_overrides_at_threshold():
+    # Imbalance >= 1.5x: left has more → boost right (negative tendency)
+    assert _effective_tendency(9, 6, 0.5) == -1.0  # 9/6 = 1.5 → trigger
+    assert _effective_tendency(10, 5, 0.7) == -1.0  # 10/5 = 2.0
+    # right has more → boost left
+    assert _effective_tendency(5, 10, -0.7) == 1.0
+
+
+def test_effective_tendency_overrides_against_attack_direction():
+    # Even if attack tendency is right (-0.5), if left is over-defended, boost right
+    assert _effective_tendency(15, 5, +0.8) == -1.0  # left over-defended despite attack pointing left
+    # Even if attack tendency is left (+0.5), if right is over-defended, boost left
+    assert _effective_tendency(5, 15, -0.8) == 1.0
+
+
+def test_effective_tendency_handles_zero_min_side():
+    # Avoid div-by-zero: if min_side==0, the max_side just needs to be >0 to trigger
+    assert _effective_tendency(3, 0, 0.0) == -1.0  # left=3, right=0 → boost right
+    assert _effective_tendency(0, 0, 0.5) == 0.5  # both zero → no override

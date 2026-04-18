@@ -209,6 +209,32 @@ def init_coverage(threat_count, turret_locs, raw_range):
 
 
 SP_RESOURCE_INDEX = 0  # game_state.get_resource(SP_RESOURCE_INDEX) returns SP
+PARITY_OVERRIDE_RATIO = 1.5  # if max_side / min_side ≥ this, override tendency to boost weak side
+
+
+def _count_turrets_per_side(game_state, turret_shorthand):
+    """Count present turrets in each upper-half flank (x<14 vs x>=14)."""
+    left = right = 0
+    y_lo, y_hi = UPPER_HALF_Y_RANGE
+    for cell in _enumerate_friendly_diamond():
+        x, y = cell
+        if y < y_lo or y > y_hi:
+            continue
+        unit = game_state.contains_stationary_unit(list(cell))
+        if unit and unit.unit_type == turret_shorthand:
+            if x < 14:
+                left += 1
+            else:
+                right += 1
+    return left, right
+
+
+def _effective_tendency(left_count, right_count, attack_tendency):
+    """If side imbalance exceeds PARITY_OVERRIDE_RATIO, force tendency toward weaker side."""
+    hi, lo = max(left_count, right_count), min(left_count, right_count)
+    if hi >= PARITY_OVERRIDE_RATIO * max(lo, 1):
+        return -1.0 if left_count > right_count else 1.0
+    return attack_tendency
 
 
 def place_turrets(
@@ -224,7 +250,9 @@ def place_turrets(
     """Greedy turret placer + upgrade-fallback. See spec for full design.
 
     attack_tendency ∈ [-1, 1]: positive = enemy favors LEFT flank; feeds
-    tendency_factor inside score_placement.
+    tendency_factor inside score_placement. When per-side turret count
+    imbalance ≥ PARITY_OVERRIDE_RATIO, the effective tendency is forced
+    toward the weaker side regardless of attack_tendency.
     """
     placed = []
     upgraded = []
@@ -235,14 +263,16 @@ def place_turrets(
 
     candidates = candidate_cells(game_state)
     coverage = init_coverage(threat, list(anchor_locations), raw_range)
+    left_count, right_count = _count_turrets_per_side(game_state, turret_shorthand)
 
     # --- Phase 3: Greedy placement ---
     turret_cost = game_state.type_cost(turret_shorthand)[SP_RESOURCE_INDEX]
     stopped = "budget_exhausted"
     while game_state.get_resource(SP_RESOURCE_INDEX) >= turret_cost and candidates:
+        eff_tendency = _effective_tendency(left_count, right_count, attack_tendency)
         best, best_score = None, min_placement_score
         for c in candidates:
-            s = score_placement(c, threat, coverage, raw_range, scoring, attack_tendency)
+            s = score_placement(c, threat, coverage, raw_range, scoring, eff_tendency)
             if s > best_score:
                 best, best_score = c, s
         if best is None:
@@ -254,6 +284,10 @@ def place_turrets(
             continue
         placed.append(best)
         candidates.remove(best)
+        if best[0] < 14:
+            left_count += 1
+        else:
+            right_count += 1
         for tile in threat:
             if in_range(best, tile, raw_range):
                 coverage[tile] = coverage.get(tile, 0) + 1
