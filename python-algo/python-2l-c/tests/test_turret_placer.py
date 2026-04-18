@@ -455,3 +455,56 @@ def test_place_turrets_no_threat_does_nothing():
                             scoring="path_freq", raw_range=2.5, upgraded_range=3.5)
     assert stub.spawn_calls == []
     assert result["stopped_reason"] == "no_threat"
+
+
+from turret_placer import corner_factor, tendency_factor
+
+
+@pytest.mark.parametrize("x,expected", [
+    (0, 1.5), (1, 1.5), (2, 1.5), (3, 1.5),
+    (24, 1.5), (25, 1.5), (26, 1.5), (27, 1.5),
+    (4, 1.2), (5, 1.2), (6, 1.2), (21, 1.2), (22, 1.2), (23, 1.2),
+    (7, 1.0), (13, 1.0), (14, 1.0), (20, 1.0),
+])
+def test_corner_factor_table(x, expected):
+    assert corner_factor(x) == expected
+
+
+def test_tendency_factor_zero_means_no_boost():
+    assert tendency_factor(0, 0.0) == 1.0
+    assert tendency_factor(13, 0.0) == 1.0
+    assert tendency_factor(27, 0.0) == 1.0
+
+
+def test_tendency_factor_boosts_favored_left():
+    # tendency=1.0 → enemy always attacks left → left cells get +50%
+    assert tendency_factor(5, 1.0) == pytest.approx(1.5)
+    assert tendency_factor(13, 1.0) == pytest.approx(1.5)
+    # right side stays at 1.0
+    assert tendency_factor(14, 1.0) == 1.0
+    assert tendency_factor(22, 1.0) == 1.0
+
+
+def test_tendency_factor_boosts_favored_right():
+    # tendency=-1.0 → enemy always attacks right → right cells get +50%
+    assert tendency_factor(14, -1.0) == pytest.approx(1.5)
+    assert tendency_factor(22, -1.0) == pytest.approx(1.5)
+    # left side stays at 1.0
+    assert tendency_factor(5, -1.0) == 1.0
+
+
+def test_tendency_factor_partial_asymmetry():
+    # tendency=0.5 → left cells get +25%
+    assert tendency_factor(5, 0.5) == pytest.approx(1.25)
+    assert tendency_factor(14, 0.5) == 1.0
+
+
+def test_score_placement_applies_corner_and_tendency():
+    # cell (1,13): corner_factor=1.5, depth_factor=0.90
+    # threat tile (1,13) itself, weight=1.0 under stacking
+    # tendency=1.0 (enemy favors left) → tendency_factor=1.5 for x=1
+    # Expected: 0.90 × 1.5 × 1.5 × 1.0 = 2.025
+    threat = {(1, 13): 1}
+    coverage = {(1, 13): 0}
+    score = score_placement((1, 13), threat, coverage, 2.5, "stacking", tendency=1.0)
+    assert score == pytest.approx(0.90 * 1.5 * 1.5)

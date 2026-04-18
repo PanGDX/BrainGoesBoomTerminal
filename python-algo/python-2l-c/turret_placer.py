@@ -16,11 +16,42 @@ _DEPTH_FACTORS = {
 
 UPPER_HALF_Y_RANGE = (8, 13)  # inclusive on both ends
 
+_STRONG_CORNER_XS = frozenset({0, 1, 2, 3, 24, 25, 26, 27})
+_MID_FLANK_XS = frozenset({4, 5, 6, 21, 22, 23})
+STRONG_CORNER_BOOST = 1.5
+MID_FLANK_BOOST = 1.2
+TENDENCY_MAX_MULTIPLIER = 0.5  # at |tendency|=1, favored side is × (1 + 0.5) = 1.5
+
 
 def depth_factor(y):
     if y not in _DEPTH_FACTORS:
         raise ValueError(f"y={y} outside upper-half range {UPPER_HALF_Y_RANGE}")
     return _DEPTH_FACTORS[y]
+
+
+def corner_factor(x):
+    """Horizontal-position boost: stronger at outer columns, tapering inward."""
+    if x in _STRONG_CORNER_XS:
+        return STRONG_CORNER_BOOST
+    if x in _MID_FLANK_XS:
+        return MID_FLANK_BOOST
+    return 1.0
+
+
+def tendency_factor(x, tendency):
+    """Boost candidates on the side the enemy attacks more.
+
+    tendency ∈ [-1, 1]; positive = enemy spawns more from LEFT (x<14).
+    Only boosts the favored side — unfavored stays at 1.0.
+    """
+    if tendency == 0:
+        return 1.0
+    is_left = x < 14
+    if tendency > 0 and is_left:
+        return 1.0 + TENDENCY_MAX_MULTIPLIER * tendency
+    if tendency < 0 and not is_left:
+        return 1.0 + TENDENCY_MAX_MULTIPLIER * (-tendency)
+    return 1.0
 
 
 def in_range(turret_loc, target_loc, attack_range):
@@ -49,18 +80,21 @@ def tile_weight(tile, coverage, threat_count, mode):
     raise ValueError(f"unknown scoring mode: {mode!r}")
 
 
-def score_placement(cell, threat_count, coverage, attack_range, mode):
+def score_placement(cell, threat_count, coverage, attack_range, mode, tendency=0.0):
     """Score for placing a fresh turret at `cell`.
 
-    Sums tile_weight × depth_factor over all threat tiles in range.
+    Sums tile_weight over threat tiles in range, multiplied by:
+      depth_factor(y) × corner_factor(x) × tendency_factor(x, tendency)
     """
     cx, cy = cell
     df = depth_factor(cy)
+    cf = corner_factor(cx)
+    tf = tendency_factor(cx, tendency)
     total = 0.0
     for tile in threat_count:
         if in_range(cell, tile, attack_range):
             total += tile_weight(tile, coverage, threat_count, mode)
-    return df * total
+    return df * cf * tf * total
 
 
 RAW_TURRET_DAMAGE = 6
@@ -185,8 +219,13 @@ def place_turrets(
     raw_range=2.5,
     upgraded_range=3.5,
     min_placement_score=0.0,
+    attack_tendency=0.0,
 ):
-    """Greedy turret placer + upgrade-fallback. See spec for full design."""
+    """Greedy turret placer + upgrade-fallback. See spec for full design.
+
+    attack_tendency ∈ [-1, 1]: positive = enemy favors LEFT flank; feeds
+    tendency_factor inside score_placement.
+    """
     placed = []
     upgraded = []
 
@@ -203,7 +242,7 @@ def place_turrets(
     while game_state.get_resource(SP_RESOURCE_INDEX) >= turret_cost and candidates:
         best, best_score = None, min_placement_score
         for c in candidates:
-            s = score_placement(c, threat, coverage, raw_range, scoring)
+            s = score_placement(c, threat, coverage, raw_range, scoring, attack_tendency)
             if s > best_score:
                 best, best_score = c, s
         if best is None:

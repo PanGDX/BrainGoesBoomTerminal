@@ -87,6 +87,13 @@ class AlgoStrategy(gamelib.AlgoCore):
         ATTACK_LEFT_REMOVE_WALL_LOCATION = [6, 7]
         ATTACK_RIGHT_REMOVE_WALL_LOCATION = [21, 8]
 
+        # Enemy attack-tendency tracking (populated by on_action_frame).
+        # Counts cumulative enemy mobile-unit spawns per flank.
+        self.enemy_spawn_left = 0
+        self.enemy_spawn_right = 0
+        # Activation: tendency stays 0 until at least this many spawns observed.
+        self.tendency_min_spawns = 5
+
         # Important characteristics of a game state, will be parsed in self.parse_game_state()
         self.enemy_left_edge_strength = 100
         self.enemy_right_edge_strength = 100
@@ -212,17 +219,47 @@ class AlgoStrategy(gamelib.AlgoCore):
     def build_defences(self, game_state):
         self.refund_low_health_structures(game_state)
         self.build_default_defences(game_state)
+        tendency = self._compute_attack_tendency()
         result = place_turrets(
             game_state,
             anchor_locations=ANCHOR_TURRETS,
             turret_shorthand=TURRET,
             scoring=TURRET_SCORING_MODE,
+            attack_tendency=tendency,
         )
         gamelib.debug_write(
             f"placer: placed={len(result['placed'])} "
             f"upgraded={len(result['upgraded'])} "
-            f"stop={result['stopped_reason']}"
+            f"stop={result['stopped_reason']} "
+            f"tendency={tendency:+.2f} (L={self.enemy_spawn_left} R={self.enemy_spawn_right})"
         )
+
+    def _compute_attack_tendency(self):
+        """Cumulative-spawn-derived flank tendency. Returns 0.0 until ≥ 5 spawns."""
+        total = self.enemy_spawn_left + self.enemy_spawn_right
+        if total < self.tendency_min_spawns:
+            return 0.0
+        return (self.enemy_spawn_left - self.enemy_spawn_right) / total
+
+    def on_action_frame(self, turn_string):
+        """Tally enemy mobile-unit spawn cells per flank. Read once per turn at
+        the start of the deploy phase (turnInfo[0]==1, turnInfo[2]==0).
+        """
+        state = json.loads(turn_string)
+        turn_info = state.get("turnInfo", [])
+        if len(turn_info) < 3 or turn_info[0] != 1 or turn_info[2] != 0:
+            return
+        for spawn in state.get("events", {}).get("spawn", []):
+            if len(spawn) < 4:
+                continue
+            location, unit_type, _uid, player = spawn[0], spawn[1], spawn[2], spawn[3]
+            # unit_type 3=SCOUT, 4=DEMOLISHER, 5=INTERCEPTOR; player 2 = enemy
+            if player != 2 or unit_type not in (3, 4, 5):
+                continue
+            if location[0] < 14:
+                self.enemy_spawn_left += 1
+            else:
+                self.enemy_spawn_right += 1
 
 
     def enumerate_friendly_side_locations(self, game_state):
