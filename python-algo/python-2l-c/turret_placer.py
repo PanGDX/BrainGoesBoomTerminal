@@ -210,6 +210,57 @@ def init_coverage(threat_count, turret_locs, raw_range):
 
 SP_RESOURCE_INDEX = 0  # game_state.get_resource(SP_RESOURCE_INDEX) returns SP
 PARITY_OVERRIDE_RATIO = 1.5  # if max_side / min_side ≥ this, override tendency to boost weak side
+WEAKNESS_BOOST_FACTOR = 3  # threat_count multiplier for cells on the most-dangerous enemy path
+SCOUT_ATTACK_RANGE_FOR_DAMAGE_SIM = 3.5  # walker range used to simulate enemy damage potential
+
+
+def _collect_our_structures(game_state):
+    """List of (x, y) for every structure belonging to player 0 in the friendly diamond."""
+    out = []
+    for cell in _enumerate_friendly_diamond():
+        unit = game_state.contains_stationary_unit(list(cell))
+        if unit and getattr(unit, "player_index", 0) == 0:
+            out.append(cell)
+    return out
+
+
+def _damage_along_path(path, our_structures, walker_range):
+    """Sum: for each cell on path, count of our_structures within walker_range.
+
+    Used as a relative-ranking metric to find the path that lets an enemy walker
+    inflict the most structural damage. Not a direct damage value (no walker dmg
+    constant multiplied in) — only relative comparison matters.
+    """
+    total = 0
+    for cell in path:
+        cx, cy = cell[0], cell[1]
+        for sx, sy in our_structures:
+            if math.dist((cx + 0.5, cy + 0.5), (sx + 0.5, sy + 0.5)) <= walker_range:
+                total += 1
+    return total
+
+
+def find_most_dangerous_enemy_path(game_state, walker_range=SCOUT_ATTACK_RANGE_FOR_DAMAGE_SIM):
+    """Find the enemy-spawn path that would inflict the most damage on our structures.
+
+    Iterates every enemy edge cell, simulates the path, scores by damage potential
+    (sum of structures-in-range across path cells). Returns (path, score) of the
+    worst path, or (None, -1) if no enemy spawn can reach.
+    """
+    gm = game_state.game_map
+    our_structures = _collect_our_structures(game_state)
+    worst_path, worst_damage = None, -1
+    for start_edge, target_edge in [(gm.TOP_LEFT, gm.BOTTOM_RIGHT),
+                                     (gm.TOP_RIGHT, gm.BOTTOM_LEFT)]:
+        for start in gm.get_edge_locations(start_edge):
+            path = game_state.find_path_to_edge(start, target_edge)
+            if not path:
+                continue
+            damage = _damage_along_path(path, our_structures, walker_range)
+            if damage > worst_damage:
+                worst_damage = damage
+                worst_path = path
+    return worst_path, worst_damage
 
 
 def _count_turrets_per_side(game_state, turret_shorthand):
@@ -260,6 +311,14 @@ def place_turrets(
     threat = compute_threat_surface(game_state)
     if not threat:
         return {"placed": placed, "upgraded": upgraded, "stopped_reason": "no_threat"}
+
+    # Boost threat priority along the most-damaging enemy path (anti-leak heuristic).
+    dangerous_path, _ = find_most_dangerous_enemy_path(game_state)
+    if dangerous_path:
+        for cell in dangerous_path:
+            x, y = cell[0], cell[1]
+            if y <= 13 and (x, y) in threat:
+                threat[(x, y)] = threat[(x, y)] * WEAKNESS_BOOST_FACTOR
 
     candidates = candidate_cells(game_state)
     coverage = init_coverage(threat, list(anchor_locations), raw_range)

@@ -544,3 +544,88 @@ def test_effective_tendency_handles_zero_min_side():
     # Avoid div-by-zero: if min_side==0, the max_side just needs to be >0 to trigger
     assert _effective_tendency(3, 0, 0.0) == -1.0  # left=3, right=0 → boost right
     assert _effective_tendency(0, 0, 0.5) == 0.5  # both zero → no override
+
+
+from turret_placer import find_most_dangerous_enemy_path, _damage_along_path, WEAKNESS_BOOST_FACTOR
+
+
+class _DangerStub:
+    """Stub combining edge map, paths, and stationary structures."""
+    def __init__(self, edges, paths, structures):
+        # structures: dict[(x,y)] -> _Unit (with player_index attribute)
+        self.game_map = _StubGameMap(edges)
+        self._paths = paths
+        self._units = {tuple(k): v for k, v in structures.items()}
+
+    def find_path_to_edge(self, start, target):
+        return self._paths.get((tuple(start), target))
+
+    def contains_stationary_unit(self, loc):
+        return self._units.get(tuple(loc))
+
+
+class _UnitWithPI:
+    def __init__(self, player_index, unit_type="WALL"):
+        self.player_index = player_index
+        self.unit_type = unit_type
+        self.upgraded = False
+
+
+def test_damage_along_path_counts_structures_in_range():
+    path = [[5, 13], [5, 12], [5, 11]]
+    # One structure at (6, 12), within 3.5 of all three path cells (distances 1.41, 1.0, 1.41)
+    structures = [(6, 12)]
+    dmg = _damage_along_path(path, structures, walker_range=3.5)
+    assert dmg == 3  # hit 3 times
+
+
+def test_damage_along_path_skips_far_structures():
+    path = [[5, 13]]
+    # Structure at (15, 5) — far away
+    dmg = _damage_along_path(path, [(15, 5)], walker_range=3.5)
+    assert dmg == 0
+
+
+def test_find_most_dangerous_picks_path_with_most_structures_in_range():
+    edges = {"TL": [[0, 14]], "TR": [[27, 14]], "BL": [], "BR": []}
+    # Path 1 (from TL): goes through (1,13), (1,12), (1,11) — clean
+    path1 = [[0, 14], [1, 13], [1, 12], [1, 11]]
+    # Path 2 (from TR): goes through (26,13), (25,12), (24,11) — has 2 structures nearby
+    path2 = [[27, 14], [26, 13], [25, 12], [24, 11]]
+    paths = {((0, 14), "BR"): path1, ((27, 14), "BL"): path2}
+    # Place 2 structures near path2, none near path1
+    structures = {
+        (25, 13): _UnitWithPI(0),  # within 3.5 of multiple path2 cells
+        (24, 12): _UnitWithPI(0),  # also near path2
+    }
+    stub = _DangerStub(edges, paths, structures)
+    worst_path, worst_dmg = find_most_dangerous_enemy_path(stub, walker_range=3.5)
+    assert worst_path == path2
+    assert worst_dmg > 0
+
+
+def test_find_most_dangerous_returns_none_when_no_paths():
+    edges = {"TL": [[0, 14]], "TR": [[27, 14]], "BL": [], "BR": []}
+    paths = {((0, 14), "BR"): None, ((27, 14), "BL"): None}
+    stub = _DangerStub(edges, paths, structures={})
+    worst_path, worst_dmg = find_most_dangerous_enemy_path(stub)
+    assert worst_path is None
+    assert worst_dmg == -1
+
+
+def test_find_most_dangerous_ignores_enemy_structures():
+    # Only player_index==0 (our) structures should count
+    edges = {"TL": [[0, 14]], "TR": [], "BL": [], "BR": []}
+    path = [[0, 14], [1, 13]]
+    paths = {((0, 14), "BR"): path}
+    structures = {
+        (1, 13): _UnitWithPI(1),  # enemy structure — should NOT count
+    }
+    stub = _DangerStub(edges, paths, structures)
+    _, dmg = find_most_dangerous_enemy_path(stub)
+    assert dmg == 0
+
+
+def test_weakness_boost_factor_value():
+    # Sanity: the boost multiplier is the documented 3
+    assert WEAKNESS_BOOST_FACTOR == 3
