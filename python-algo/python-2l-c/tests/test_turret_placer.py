@@ -338,3 +338,118 @@ def test_init_coverage_initializes_uncovered_to_zero():
     anchors = []
     cov = init_coverage(threat, anchors, raw_range=2.5)
     assert cov == {(10, 13): 0, (20, 13): 0}
+
+
+from turret_placer import place_turrets
+
+
+class _OrchestratorStub:
+    """Combines map, paths, occupancy, units, SP, and spawn/upgrade actions."""
+
+    TURRET_COST = 3
+    UPGRADE_COST = 8
+
+    def __init__(self, sp, edges, paths, units):
+        self._sp = sp
+        self._edges = edges
+        self._paths = paths
+        self._units = {tuple(k): v for k, v in units.items()}
+        self.spawn_calls = []
+        self.upgrade_calls = []
+        self.game_map = _StubGameMap(edges)
+
+    def find_path_to_edge(self, start, target):
+        return self._paths.get((tuple(start), target))
+
+    def contains_stationary_unit(self, loc):
+        return self._units.get(tuple(loc))
+
+    def get_resource(self, resource_type, _player=0):
+        return self._sp
+
+    def type_cost(self, unit_type, upgrade=False):
+        # Return [SP, MP] cost. Index 0 (SP) is what placer reads.
+        if upgrade:
+            return [self.UPGRADE_COST, 0]
+        return [self.TURRET_COST, 0]
+
+    def attempt_spawn(self, unit_type, loc, count=1):
+        loc = tuple(loc)
+        if self._sp < self.TURRET_COST:
+            return 0
+        self._sp -= self.TURRET_COST
+        self.spawn_calls.append(loc)
+        self._units[loc] = _Unit("TURRET", upgraded=False)
+        return 1
+
+    def attempt_upgrade(self, loc):
+        loc = tuple(loc)
+        if self._sp < self.UPGRADE_COST:
+            return 0
+        if loc not in self._units:
+            return 0
+        self._sp -= self.UPGRADE_COST
+        self.upgrade_calls.append(loc)
+        self._units[loc].upgraded = True
+        return 1
+
+
+def _make_simple_stub(sp, anchors=()):
+    # Single enemy path going straight down through x=14.
+    edges = {"TL": [], "TR": [[14, 27]], "BL": [], "BR": []}
+    path = [[14, 27 - i] for i in range(28)]  # crosses y=13..0 at x=14
+    paths = {((14, 27), "BL"): path}
+    units = {tuple(a): _Unit("TURRET", upgraded=False) for a in anchors}
+    return _OrchestratorStub(sp, edges, paths, units)
+
+
+def test_place_turrets_spends_until_sp_below_3():
+    stub = _make_simple_stub(sp=10)  # 3 turrets affordable, 1 SP left
+    result = place_turrets(stub, anchor_locations=[], turret_shorthand="TURRET",
+                            scoring="path_freq", raw_range=2.5, upgraded_range=3.5)
+    assert len(stub.spawn_calls) == 3
+    assert stub._sp == 1
+    assert result["stopped_reason"] in ("budget_exhausted", "no_positive_score")
+
+
+def test_place_turrets_upgrade_fallback_runs_after_placement():
+    # Anchor at (14,12) covers (14,13) etc. After all candidate placements
+    # (in the simple-path stub, every relevant placement has already been made),
+    # leftover SP >= 8 should trigger upgrade.
+    # SP = 9: too little for upgrade after spending most on placements.
+    # SP = 100: plenty for upgrades.
+    stub = _make_simple_stub(sp=100, anchors=[(14, 12)])
+    result = place_turrets(stub, anchor_locations=[(14, 12)], turret_shorthand="TURRET",
+                            scoring="path_freq", raw_range=2.5, upgraded_range=3.5)
+    # At least one upgrade should fire (some turret is in range of threat tiles).
+    assert len(stub.upgrade_calls) >= 1
+
+
+def test_place_turrets_strict_priority_no_upgrade_until_placement_exhausted():
+    # Tiny budget — only 3 SP. Placement gets the spend, no upgrade ever.
+    stub = _make_simple_stub(sp=3, anchors=[(14, 12)])
+    place_turrets(stub, anchor_locations=[(14, 12)], turret_shorthand="TURRET",
+                   scoring="path_freq", raw_range=2.5, upgraded_range=3.5)
+    assert len(stub.spawn_calls) == 1
+    assert len(stub.upgrade_calls) == 0
+
+
+def test_place_turrets_returns_action_log():
+    stub = _make_simple_stub(sp=6)
+    result = place_turrets(stub, anchor_locations=[], turret_shorthand="TURRET",
+                            scoring="path_freq", raw_range=2.5, upgraded_range=3.5)
+    assert "placed" in result
+    assert "upgraded" in result
+    assert "stopped_reason" in result
+    assert len(result["placed"]) == 2  # 6 SP / 3 = 2 turrets
+
+
+def test_place_turrets_no_threat_does_nothing():
+    # Path is blocked from every enemy edge → empty threat surface.
+    edges = {"TL": [[0, 14]], "TR": [[27, 14]], "BL": [], "BR": []}
+    paths = {((0, 14), "BR"): None, ((27, 14), "BL"): None}
+    stub = _OrchestratorStub(sp=10, edges=edges, paths=paths, units={})
+    result = place_turrets(stub, anchor_locations=[], turret_shorthand="TURRET",
+                            scoring="path_freq", raw_range=2.5, upgraded_range=3.5)
+    assert stub.spawn_calls == []
+    assert result["stopped_reason"] == "no_threat"

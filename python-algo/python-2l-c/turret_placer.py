@@ -172,3 +172,79 @@ def init_coverage(threat_count, turret_locs, raw_range):
             if in_range(t, tile, raw_range):
                 cov[tile] += 1
     return cov
+
+
+SP_RESOURCE_INDEX = 0  # game_state.get_resource(SP_RESOURCE_INDEX) returns SP
+
+
+def place_turrets(
+    game_state,
+    anchor_locations,
+    turret_shorthand,
+    scoring="path_freq",
+    raw_range=2.5,
+    upgraded_range=3.5,
+    min_placement_score=0.0,
+):
+    """Greedy turret placer + upgrade-fallback. See spec for full design."""
+    placed = []
+    upgraded = []
+
+    threat = compute_threat_surface(game_state)
+    if not threat:
+        return {"placed": placed, "upgraded": upgraded, "stopped_reason": "no_threat"}
+
+    candidates = candidate_cells(game_state)
+    coverage = init_coverage(threat, list(anchor_locations), raw_range)
+
+    # --- Phase 3: Greedy placement ---
+    turret_cost = game_state.type_cost("TURRET")[SP_RESOURCE_INDEX]
+    stopped = "budget_exhausted"
+    while game_state.get_resource(SP_RESOURCE_INDEX) >= turret_cost and candidates:
+        best, best_score = None, min_placement_score
+        for c in candidates:
+            s = score_placement(c, threat, coverage, raw_range, scoring)
+            if s > best_score:
+                best, best_score = c, s
+        if best is None:
+            stopped = "no_positive_score"
+            break
+        sent = game_state.attempt_spawn(turret_shorthand, list(best))
+        if sent <= 0:
+            candidates.remove(best)
+            continue
+        placed.append(best)
+        candidates.remove(best)
+        for tile in threat:
+            if in_range(best, tile, raw_range):
+                coverage[tile] = coverage.get(tile, 0) + 1
+
+    # --- Phase 4: Upgrade fallback ---
+    upgrade_cost = game_state.type_cost("TURRET", upgrade=True)[SP_RESOURCE_INDEX]
+    upgrade_pool = list(anchor_locations) + placed
+    # Re-fetch existing turrets in case anchors weren't passed and we want to upgrade
+    # whatever turrets are present in the upper half (defensive).
+    for t in existing_turrets(game_state, turret_shorthand):
+        if t not in upgrade_pool:
+            upgrade_pool.append(t)
+
+    while game_state.get_resource(SP_RESOURCE_INDEX) >= upgrade_cost and upgrade_pool:
+        best, best_score = None, 0.0
+        for t in upgrade_pool:
+            s = score_upgrade(t, threat, coverage, raw_range, upgraded_range, scoring)
+            if s > best_score:
+                best, best_score = t, s
+        if best is None:
+            break
+        sent = game_state.attempt_upgrade(list(best))
+        if sent <= 0:
+            upgrade_pool.remove(best)
+            continue
+        upgraded.append(best)
+        upgrade_pool.remove(best)
+        # Update coverage for the newly-covered annulus tiles (upgrades extend range).
+        for tile in threat:
+            if in_range(best, tile, upgraded_range) and not in_range(best, tile, raw_range):
+                coverage[tile] = coverage.get(tile, 0) + 1
+
+    return {"placed": placed, "upgraded": upgraded, "stopped_reason": stopped}
