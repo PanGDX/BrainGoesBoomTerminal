@@ -1,5 +1,5 @@
 import pytest
-from turret_placer import depth_factor, in_range, tile_weight, score_placement, score_upgrade
+from turret_placer import depth_factor, in_range, tile_weight, score_placement, score_upgrade, compute_threat_surface
 
 
 @pytest.mark.parametrize("y,expected", [
@@ -173,3 +173,69 @@ def test_score_upgrade_no_depth_factor_applied():
     s_y8_close = score_upgrade((10, 8), threat_count2, coverage2, raw_range=2.5, upgraded_range=3.5, mode="path_freq")
     # Tile in raw range, weight=1.0, gain=14, NO depth multiplier
     assert s_y8_close == pytest.approx(14.0)
+
+
+class _StubGameMap:
+    TOP_LEFT = "TL"
+    TOP_RIGHT = "TR"
+    BOTTOM_LEFT = "BL"
+    BOTTOM_RIGHT = "BR"
+
+    def __init__(self, edge_locs):
+        self._edge_locs = edge_locs
+
+    def get_edge_locations(self, edge):
+        return self._edge_locs[edge]
+
+
+class _StubGameState:
+    def __init__(self, edge_locs, paths):
+        self.game_map = _StubGameMap(edge_locs)
+        self._paths = paths  # {(start_tuple, target_str): [path_cells]}
+
+    def find_path_to_edge(self, start, target):
+        return self._paths.get((tuple(start), target))
+
+
+def test_compute_threat_surface_counts_paths_on_our_side_only():
+    # Two enemy edge cells, each with a path. Tiles at y<=13 should count.
+    edges = {
+        "TL": [[0, 14]],  # one enemy top-left cell
+        "TR": [[27, 14]],  # one enemy top-right cell
+    }
+    paths = {
+        ((0, 14), "BR"): [[0, 14], [1, 13], [2, 12], [3, 11]],
+        ((27, 14), "BL"): [[27, 14], [26, 13], [25, 12]],
+    }
+    gs = _StubGameState(edges, paths)
+    threat = compute_threat_surface(gs)
+    # Enemy-side cells (y >= 14) excluded; only y <= 13 cells counted.
+    assert threat == {
+        (1, 13): 1,
+        (2, 12): 1,
+        (3, 11): 1,
+        (26, 13): 1,
+        (25, 12): 1,
+    }
+
+
+def test_compute_threat_surface_skips_blocked_cells():
+    edges = {"TL": [[0, 14]], "TR": [[27, 14]]}
+    paths = {
+        ((0, 14), "BR"): None,  # blocked — no path
+        ((27, 14), "BL"): [[27, 14], [26, 13]],
+    }
+    gs = _StubGameState(edges, paths)
+    threat = compute_threat_surface(gs)
+    assert threat == {(26, 13): 1}
+
+
+def test_compute_threat_surface_increments_shared_tiles():
+    edges = {"TL": [[0, 14], [1, 14]], "TR": []}
+    paths = {
+        ((0, 14), "BR"): [[0, 14], [5, 13]],
+        ((1, 14), "BR"): [[1, 14], [5, 13]],  # same tile both paths
+    }
+    gs = _StubGameState(edges, paths)
+    threat = compute_threat_surface(gs)
+    assert threat[(5, 13)] == 2

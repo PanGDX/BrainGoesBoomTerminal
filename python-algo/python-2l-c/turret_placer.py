@@ -88,3 +88,29 @@ def score_upgrade(turret_loc, threat_count, coverage, raw_range, upgraded_range,
         elif in_range(turret_loc, tile, upgraded_range):
             total += annulus_gain_factor * w
     return total
+
+
+def compute_threat_surface(game_state):
+    """Build a path-frequency map of cells on our side that enemy walkers may cross.
+
+    Iterates every cell on the enemy edges (TOP_LEFT + TOP_RIGHT). Each
+    successful path contributes +1 to threat_count[(x, y)] for every cell
+    on the path with y <= 13.
+    """
+    gm = game_state.game_map
+    threat_count = {}
+    edge_targets = [
+        (gm.TOP_LEFT, gm.BOTTOM_RIGHT),
+        (gm.TOP_RIGHT, gm.BOTTOM_LEFT),
+    ]
+    for start_edge, target_edge in edge_targets:
+        for start in gm.get_edge_locations(start_edge):
+            path = game_state.find_path_to_edge(start, target_edge)
+            if not path:
+                continue
+            for cell in path:
+                x, y = cell[0], cell[1]
+                if y <= 13:
+                    key = (x, y)
+                    threat_count[key] = threat_count.get(key, 0) + 1
+    return threat_count
