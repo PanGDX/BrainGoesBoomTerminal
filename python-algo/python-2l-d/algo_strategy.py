@@ -124,6 +124,12 @@ class AlgoStrategy(gamelib.AlgoCore):
         self.AGGRESSIVE_ATTACK_LOSS_RATIO = 0.60
         self.AGGRESSIVE_ATTACK_MIN_PRIOR = 3  # need ≥3 supports last turn to trigger
 
+        # Last-turn enemy spawn memory: remember cells where enemy deployed mobile
+        # units last turn, boost defense along those paths this turn. Only ONE
+        # turn of memory.
+        self._pending_enemy_spawns = set()    # accumulates during current turn
+        self.last_turn_enemy_spawns = set()   # snapshot used this turn
+
 
     def on_turn(self, turn_state):
         """
@@ -134,10 +140,26 @@ class AlgoStrategy(gamelib.AlgoCore):
         game engine.
         """
         game_state = gamelib.GameState(self.config, turn_state)
+        # Snapshot last turn's enemy spawn memory at the start of each turn.
+        self.last_turn_enemy_spawns = set(self._pending_enemy_spawns)
+        self._pending_enemy_spawns.clear()
         self._update_aggressive_attack_trigger(game_state)
         self.starter_strategy(game_state)
 
         game_state.submit_turn()
+
+    def on_action_frame(self, turn_string):
+        """Accumulate enemy mobile-unit spawn cells into the pending buffer.
+        Snapshotted by on_turn at the start of each new turn.
+        """
+        state = json.loads(turn_string)
+        for spawn in state.get("events", {}).get("spawn", []):
+            if len(spawn) < 4:
+                continue
+            location, unit_type, _uid, player = spawn[0], spawn[1], spawn[2], spawn[3]
+            # action-frame convention: player==2 is enemy, unit_type 3/4/5 = SCOUT/DEMO/INTERCEPTOR
+            if player == 2 and unit_type in (3, 4, 5):
+                self._pending_enemy_spawns.add(tuple(location))
 
     def _count_enemy_supports(self, game_state):
         """Count enemy SUPPORT structures currently on the board."""
@@ -265,11 +287,13 @@ class AlgoStrategy(gamelib.AlgoCore):
             game_state,
             turret_shorthand=TURRET,
             candidate_pool=CURATED_TURRET_POSITIONS,
+            last_turn_enemy_spawns=self.last_turn_enemy_spawns,
         )
         gamelib.debug_write(
             f"placer: placed={len(result['placed'])} "
             f"upgraded={len(result['upgraded'])} "
-            f"stop={result['stopped_reason']}"
+            f"stop={result['stopped_reason']} "
+            f"memory={len(self.last_turn_enemy_spawns)}"
         )
 
 

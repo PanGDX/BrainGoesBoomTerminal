@@ -16,7 +16,7 @@ import math
 _STRONG_CORNER_XS = frozenset({0, 1, 2, 3, 24, 25, 26, 27})
 _QUARTER_ZONE_XS = frozenset({4, 5, 6, 7, 8, 9, 18, 19, 20, 21, 22, 23})
 _MIDDLE_XS = frozenset({10, 11, 12, 13, 14, 15, 16, 17})
-STRONG_CORNER_BOOST = 1.5
+STRONG_CORNER_BOOST = 3.0
 QUARTER_ZONE_BOOST = 1.5
 MIDDLE_PENALTY = 0.8
 
@@ -65,6 +65,7 @@ def compute_threat_surface(game_state):
 
 WEAKNESS_BOOST_FACTOR = 3
 SCOUT_ATTACK_RANGE_FOR_DAMAGE_SIM = 3.5
+LAST_TURN_ATTACK_BOOST = 2  # threat_count multiplier for cells the enemy actually traversed last turn
 
 
 def _enumerate_friendly_diamond():
@@ -176,6 +177,7 @@ def place_turrets(
     raw_range=2.5,
     upgraded_range=3.5,
     min_placement_score=0.0,
+    last_turn_enemy_spawns=None,
 ):
     """Greedy turret placer over a curated pool + upgrade fallback.
 
@@ -184,6 +186,9 @@ def place_turrets(
     or no positive score.
 
     candidate_pool: required list of (x, y) tuples — the only allowed positions.
+    last_turn_enemy_spawns: optional iterable of (x, y) cells where the enemy
+        actually deployed mobile units last turn. Paths from these cells get
+        threat_count multiplied by LAST_TURN_ATTACK_BOOST (reactive memory).
     """
     placed = []
     upgraded = []
@@ -192,13 +197,28 @@ def place_turrets(
     if not threat:
         return {"placed": placed, "upgraded": upgraded, "stopped_reason": "no_threat"}
 
-    # Boost threat priority along the most-damaging enemy path.
+    # Boost threat priority along the most-damaging enemy path (predictive).
     dangerous_path, _ = find_most_dangerous_enemy_path(game_state)
     if dangerous_path:
         for cell in dangerous_path:
             x, y = cell[0], cell[1]
             if y <= 13 and (x, y) in threat:
                 threat[(x, y)] = threat[(x, y)] * WEAKNESS_BOOST_FACTOR
+
+    # Boost threat along paths the enemy actually used last turn (reactive memory).
+    if last_turn_enemy_spawns:
+        gm = game_state.game_map
+        for spawn in last_turn_enemy_spawns:
+            # enemy spawns target our closer edge; try both and pick the one with a valid path
+            for target in (gm.BOTTOM_LEFT, gm.BOTTOM_RIGHT):
+                path = game_state.find_path_to_edge(list(spawn), target)
+                if not path:
+                    continue
+                for cell in path:
+                    x, y = cell[0], cell[1]
+                    if y <= 13 and (x, y) in threat:
+                        threat[(x, y)] = threat[(x, y)] * LAST_TURN_ATTACK_BOOST
+                break  # only one path per spawn
 
     candidates = [
         (x, y) for (x, y) in candidate_pool

@@ -35,8 +35,8 @@ def test_in_range_diagonal_within_upgraded_range():
 # --- corner_factor ---------------------------------------------------------
 
 @pytest.mark.parametrize("x,expected", [
-    (0, 1.5), (1, 1.5), (2, 1.5), (3, 1.5),
-    (24, 1.5), (25, 1.5), (26, 1.5), (27, 1.5),
+    (0, 3.0), (1, 3.0), (2, 3.0), (3, 3.0),
+    (24, 3.0), (25, 3.0), (26, 3.0), (27, 3.0),
     (4, 1.5), (5, 1.5), (6, 1.5), (7, 1.5), (8, 1.5), (9, 1.5),
     (18, 1.5), (19, 1.5), (20, 1.5), (21, 1.5), (22, 1.5), (23, 1.5),
     (10, 0.8), (11, 0.8), (12, 0.8), (13, 0.8),
@@ -98,9 +98,9 @@ def test_score_placement_no_threat_in_range_returns_zero():
 
 
 def test_score_placement_corner_factor_applies():
-    # cell (1,13) corner=1.5, tile (1,13) in range, weight=4 → 1.5 * 4 = 6.0
+    # cell (1,13) corner=3.0, tile (1,13) in range, weight=4 → 3.0 * 4 = 12.0
     threat = {(1, 13): 4}
-    assert score_placement((1, 13), threat, 2.5) == pytest.approx(6.0)
+    assert score_placement((1, 13), threat, 2.5) == pytest.approx(12.0)
 
 
 def test_score_placement_middle_penalty_applies():
