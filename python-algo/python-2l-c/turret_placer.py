@@ -28,3 +28,22 @@ def in_range(turret_loc, target_loc, attack_range):
     tx, ty = turret_loc
     px, py = target_loc
     return math.dist((tx + 0.5, ty + 0.5), (px + 0.5, py + 0.5)) <= attack_range
+
+
+SCORING_MODES = ("gap_fill", "stacking", "path_freq")
+
+
+def tile_weight(tile, coverage, threat_count, mode):
+    """Return a per-tile weight in [0, 1] under the chosen scoring mode."""
+    if mode == "gap_fill":
+        return 1.0 if coverage.get(tile, 0) == 0 else 0.2
+    if mode == "stacking":
+        return 1.0
+    if mode == "path_freq":
+        if not threat_count:
+            return 0.0
+        peak = max(threat_count.values())
+        if peak == 0:
+            return 0.0
+        return threat_count.get(tile, 0) / peak
+    raise ValueError(f"unknown scoring mode: {mode!r}")
