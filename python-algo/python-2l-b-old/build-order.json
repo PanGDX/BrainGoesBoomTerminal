@@ -1,28 +1,21 @@
 {
   "start": [ 
-
+    { "type": "spawn", "unit": "TURRET", "location": [2, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [6, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [12, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [13, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [14, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [15, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [21, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [25, 13] },
     { "type": "spawn", "unit": "SUPPORT", "location": [13, 12] },
     { "type": "spawn", "unit": "SUPPORT", "location": [14, 12] },
     { "type": "upgrade", "unit": "SUPPORT", "location": [13, 12] },
-    { "type": "upgrade", "unit": "SUPPORT", "location": [14, 12] },
-    { "type": "spawn", "unit": "TURRET", "location": [2, 12] },
-    { "type": "spawn", "unit": "TURRET", "location": [25, 12] }
+    { "type": "upgrade", "unit": "SUPPORT", "location": [14, 12] }
   ],
   "frontline" : [
 	{ "type": "spawn", "unit": "WALL", "location": [0, 13] },
 	{ "type": "spawn", "unit": "WALL", "location": [27, 13] },
-  { "type": "spawn", "unit": "WALL", "location": [1, 13] },
-  { "type": "spawn", "unit": "WALL", "location": [26, 13] },
-  { "type": "spawn", "unit": "WALL", "location": [2, 13] },
-  { "type": "spawn", "unit": "WALL", "location": [25, 13] },
-  { "type": "spawn", "unit": "WALL", "location": [3, 13] },
-  { "type": "spawn", "unit": "WALL", "location": [24, 13] },
 	{ "type": "spawn", "unit": "TURRET", "location": [1, 13] },
 	{ "type": "spawn", "unit": "TURRET", "location": [26, 13] },
 	{ "type": "spawn", "unit": "TURRET", "location": [3, 13] },
@@ -37,6 +30,12 @@
 	{ "type": "upgrade", "unit": "WALL", "location": [27, 13] }
   ],
   "catchline": [
+    { "type": "spawn", "unit": "TURRET", "location": [11, 4] },
+    { "type": "spawn", "unit": "TURRET", "location": [12, 3] },
+    { "type": "spawn", "unit": "TURRET", "location": [13, 2] },
+    { "type": "spawn", "unit": "TURRET", "location": [14, 2] },
+    { "type": "spawn", "unit": "TURRET", "location": [15, 3] },
+    { "type": "spawn", "unit": "TURRET", "location": [16, 4] },
     { "type": "spawn", "unit": "TURRET", "location": [3, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [24, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [6, 12] },
@@ -49,14 +48,6 @@
     { "type": "spawn", "unit": "TURRET", "location": [9, 11] },
     { "type": "spawn", "unit": "TURRET", "location": [18, 10] },
     { "type": "spawn", "unit": "TURRET", "location": [18, 11] }
-  ],
-  "funnel": [
-    { "type": "spawn", "unit": "TURRET", "location": [11, 4] },
-    { "type": "spawn", "unit": "TURRET", "location": [12, 3] },
-    { "type": "spawn", "unit": "TURRET", "location": [13, 2] },
-    { "type": "spawn", "unit": "TURRET", "location": [14, 2] },
-    { "type": "spawn", "unit": "TURRET", "location": [15, 3] },
-    { "type": "spawn", "unit": "TURRET", "location": [16, 4] }
   ],
   "supportstructure": [
 	{ "type": "spawn", "unit": "SUPPORT", "location": [13, 11] },
