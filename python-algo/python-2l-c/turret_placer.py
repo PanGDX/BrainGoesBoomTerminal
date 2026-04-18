@@ -47,3 +47,17 @@ def tile_weight(tile, coverage, threat_count, mode):
             return 0.0
         return threat_count.get(tile, 0) / peak
     raise ValueError(f"unknown scoring mode: {mode!r}")
+
+
+def score_placement(cell, threat_count, coverage, attack_range, mode):
+    """Score for placing a fresh turret at `cell`.
+
+    Sums tile_weight × depth_factor over all threat tiles in range.
+    """
+    cx, cy = cell
+    df = depth_factor(cy)
+    total = 0.0
+    for tile in threat_count:
+        if in_range(cell, tile, attack_range):
+            total += tile_weight(tile, coverage, threat_count, mode)
+    return df * total
