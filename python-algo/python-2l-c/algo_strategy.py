@@ -30,6 +30,13 @@ ANCHOR_TURRETS = [
 ]
 TURRET_SCORING_MODE = "path_freq"  # one of: "gap_fill", "stacking", "path_freq"
 
+# Scout-spawn picker bonus per enemy SUPPORT in scout range along the path.
+# Higher = more aggressive support-hunting (tolerate more turret damage to land
+# the rush near supports). Upgraded supports count UPGRADED_MULT × this bonus.
+SUPPORT_TARGET_BONUS = 30
+SUPPORT_TARGET_UPGRADED_MULT = 2
+SCOUT_ATTACK_RANGE = 3.5  # game-configs.json scout attackRange
+
 class AlgoStrategy(gamelib.AlgoCore):
     def __init__(self):
         super().__init__()
@@ -340,49 +347,76 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def find_best_scout_spawn(self, game_state):
         """
-        Simulate pathing from all valid edge locations to find the path that takes 
-        the LEAST damage from enemy turrets. Returns the best location alongside the lowest damage taken.
+        Pick the scout-spawn cell with the best score:
+            score = damage_taken − SUPPORT_TARGET_BONUS × supports_in_range
+        Lower score = better spawn. Returns (best_location, RAW damage_taken at that
+        spawn) so the funnel-trigger threshold sees real damage, not the adjusted score.
         """
         friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + \
                          game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
-        
-        # Filter out edges that we blocked with our own walls/turrets
+
         deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
-        
-        # Default fallback corners
         default_corners = [[13, 0], [14, 0]]
-        
         if not deploy_locations:
             return random.choice(default_corners), float('inf')
 
-        best_location = None
-        lowest_damage = float('inf')
-        
-        # Turret damage reference
         turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
+        enemy_supports = self._enemy_support_locations(game_state)
+
+        best_location = None
+        best_score = float('inf')
+        best_raw_damage = float('inf')
 
         for loc in deploy_locations:
             path = game_state.find_path_to_edge(loc)
             damage_taken = 0
-            
+            supports_hit = set()  # dedupe across path tiles
+
             for path_location in path:
-                # Count how many enemy turrets can attack this specific tile
-                attackers = game_state.get_attackers(path_location, 0) # 0 is our player index
+                attackers = game_state.get_attackers(path_location, 0)
                 damage_taken += len(attackers) * turret_damage
-                
-            if damage_taken < lowest_damage:
-                lowest_damage = damage_taken
+                for sx, sy, upgraded in enemy_supports:
+                    if (sx, sy) in supports_hit:
+                        continue
+                    if math.dist((path_location[0] + 0.5, path_location[1] + 0.5),
+                                 (sx + 0.5, sy + 0.5)) <= SCOUT_ATTACK_RANGE:
+                        supports_hit.add((sx, sy))
+
+            support_bonus = 0
+            for sx, sy in supports_hit:
+                upgraded = next(u for ux, uy, u in enemy_supports if (ux, uy) == (sx, sy))
+                support_bonus += SUPPORT_TARGET_BONUS * (SUPPORT_TARGET_UPGRADED_MULT if upgraded else 1)
+
+            score = damage_taken - support_bonus
+            if score < best_score:
+                best_score = score
                 best_location = loc
-                
-        # If no damage is taken or if no path returns anything, default back to corner paths
-        if best_location is None or lowest_damage == 0: 
+                best_raw_damage = damage_taken
+
+        # Fallback: no path scored or every path is harmless AND has no supports — pick a corner.
+        if best_location is None or (best_raw_damage == 0 and best_score == 0):
             valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
-            if valid_corners:
-                best_location = random.choice(valid_corners)
-            else:
-                best_location = random.choice(default_corners)
-                
-        return best_location, lowest_damage
+            best_location = random.choice(valid_corners or default_corners)
+
+        return best_location, best_raw_damage
+
+    def _enemy_support_locations(self, game_state):
+        """List of (x, y, upgraded) for every enemy SUPPORT on the board.
+
+        Iterates the enemy half-diamond (y in [14, 27]) and filters by player
+        index + unit type.
+        """
+        out = []
+        for x in range(28):
+            y_max = x + 14 if x < 14 else 41 - x
+            for y in range(14, y_max + 1):
+                unit = game_state.contains_stationary_unit([x, y])
+                if not unit or unit.player_index != 1:
+                    continue
+                if unit.unit_type != SUPPORT:
+                    continue
+                out.append((x, y, getattr(unit, "upgraded", False)))
+        return out
 
 
     def spawn_interceptor(self, game_state, location, number):
