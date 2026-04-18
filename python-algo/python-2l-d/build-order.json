@@ -1,0 +1,19 @@
+{
+  "start": [
+    { "type": "spawn", "unit": "TURRET", "location": [6, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [12, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [13, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [14, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [15, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [21, 13] },
+    { "type": "spawn", "unit": "SUPPORT", "location": [13, 12] },
+    { "type": "spawn", "unit": "SUPPORT", "location": [14, 12] },
+    { "type": "upgrade", "unit": "SUPPORT", "location": [13, 12] },
+    { "type": "upgrade", "unit": "SUPPORT", "location": [14, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [2, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [25, 12] }
+  ],
+  "frontline": [],
+  "catchline": [],
+  "supportstructure": []
+}
