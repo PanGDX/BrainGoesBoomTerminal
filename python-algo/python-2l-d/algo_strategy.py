@@ -26,19 +26,20 @@ Advanced strategy tips:
 # Must match the TURRET entries in build-order.json `start` tier.
 ANCHOR_TURRETS = [
     (6, 13), (12, 12), (13, 13), (14, 13), (15, 12),
-    (21, 13), (2, 12), (25, 12),
+    (21, 13), (2, 12), (25, 12), (11,11) , (16,11)
 ]
 # Curated turret positions — derived from python-2l-b's original build-order tiers
 # (frontline, catchline, supportstructure), filtered to upper half y in [8, 13].
 # Placer picks from THIS pool only, using greedy scoring to decide order.
 CURATED_TURRET_POSITIONS = [
     # frontline — y=13 belt
-    (1, 13), (26, 13), (3, 13), (24, 13),
-    (9, 13), (18, 13), (10, 13), (17, 13), (11, 13), (16, 13),
+    (0, 13), (27, 13),
+    (1, 13), (26, 13),  (5, 13) , (22, 13),
+    (9, 13), (18, 13), (10, 13), (17, 13),
     # catchline — y=10..12 second row
-    (3, 12), (24, 12), (6, 12), (21, 12),
-    (4, 11), (23, 11),
-    (5, 10), (22, 10), (9, 10), (9, 11), (18, 10), (18, 11),
+     (7, 12), (20, 12),(2, 11),(25, 11),(3 ,10),(24, 10),
+    (5, 11), (22, 11),  (8, 11) , (19 , 11),
+    (5, 10), (22, 10), (8, 10), (19, 10) ,
     # supportstructure turrets — y=8..12 deep (upper half only)
     (9, 12), (10, 12), (17, 12), (18, 12),
     (7, 8), (20, 8),
