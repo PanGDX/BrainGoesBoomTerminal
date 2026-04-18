@@ -136,6 +136,12 @@ class AlgoStrategy(gamelib.AlgoCore):
         self.disable_support_targeting = False
         self.MAX_SUPPORT_ATTACK_ATTEMPTS = 3
 
+        # Breach-cell tracking: cells where enemy walkers reached our edge last
+        # turn (scored HP damage). Used to force-place defensive turrets before
+        # the greedy placer runs. 1-turn memory.
+        self._pending_breach_cells = set()
+        self.last_turn_breach_cells = set()
+
 
     def on_turn(self, turn_state):
         """
@@ -146,26 +152,38 @@ class AlgoStrategy(gamelib.AlgoCore):
         game engine.
         """
         game_state = gamelib.GameState(self.config, turn_state)
-        # Snapshot last turn's enemy spawn memory at the start of each turn.
+        # Snapshot last turn's memory at the start of each turn.
         self.last_turn_enemy_spawns = set(self._pending_enemy_spawns)
         self._pending_enemy_spawns.clear()
+        self.last_turn_breach_cells = set(self._pending_breach_cells)
+        self._pending_breach_cells.clear()
         self._update_aggressive_attack_trigger(game_state)
         self.starter_strategy(game_state)
 
         game_state.submit_turn()
 
     def on_action_frame(self, turn_string):
-        """Accumulate enemy mobile-unit spawn cells into the pending buffer.
+        """Accumulate enemy spawn cells and breach cells into pending buffers.
         Snapshotted by on_turn at the start of each new turn.
         """
         state = json.loads(turn_string)
-        for spawn in state.get("events", {}).get("spawn", []):
+        events = state.get("events", {})
+        for spawn in events.get("spawn", []):
             if len(spawn) < 4:
                 continue
             location, unit_type, _uid, player = spawn[0], spawn[1], spawn[2], spawn[3]
             # action-frame convention: player==2 is enemy, unit_type 3/4/5 = SCOUT/DEMO/INTERCEPTOR
             if player == 2 and unit_type in (3, 4, 5):
                 self._pending_enemy_spawns.add(tuple(location))
+        # Breach events: format [location, damage, unit_type, unit_id, player]
+        # where player is the OWNER of the breaching walker. player==2 = enemy
+        # breaching us (location on our edge). player==1 = us breaching them.
+        for breach in events.get("breach", []):
+            if len(breach) < 5:
+                continue
+            location, player = breach[0], breach[4]
+            if player == 2:
+                self._pending_breach_cells.add(tuple(location))
 
     def _count_enemy_supports(self, game_state):
         """Count enemy SUPPORT structures currently on the board."""
@@ -294,9 +312,37 @@ class AlgoStrategy(gamelib.AlgoCore):
         return strength
 
 
+    def _force_defend_breaches(self, game_state):
+        """For each breach cell from last turn, force-spawn up to 2 turrets near it.
+        Bypasses the curated pool — direct placement at (bx, 13) and (bx, 12) by default,
+        with adjacent x fallbacks if those are occupied or out of diamond.
+        """
+        if not self.last_turn_breach_cells:
+            return
+        turret_cost = game_state.type_cost(TURRET)[0]
+        for bx, _by in self.last_turn_breach_cells:
+            placed = 0
+            candidates = [(bx, 13), (bx, 12), (bx - 1, 13), (bx + 1, 13), (bx - 1, 12), (bx + 1, 12)]
+            for cx, cy in candidates:
+                if placed >= 2:
+                    break
+                if game_state.get_resource(SP) < turret_cost:
+                    return
+                if not (0 <= cx <= 27 and 8 <= cy <= 13):
+                    continue
+                if game_state.contains_stationary_unit([cx, cy]):
+                    continue
+                sent = game_state.attempt_spawn(TURRET, [cx, cy])
+                if sent > 0:
+                    placed += 1
+                    gamelib.debug_write(
+                        f"FORCE-DEFEND: turret at ({cx},{cy}) for breach at ({bx},{_by})"
+                    )
+
     def build_defences(self, game_state):
         self.refund_low_health_structures(game_state)
         self.build_default_defences(game_state)
+        self._force_defend_breaches(game_state)
         result = place_turrets(
             game_state,
             turret_shorthand=TURRET,
@@ -389,6 +435,10 @@ class AlgoStrategy(gamelib.AlgoCore):
         # of least defensive damage; skip funnel analysis.
         if self.aggressive_attack:
             best_scout_location, _ = self.find_best_scout_spawn(game_state)
+            if best_scout_location is None:
+                gamelib.debug_write("AGGRESSIVE-ATTACK skipped — no valid scout path this turn")
+                self.aggressive_attack = False
+                return
             game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
             gamelib.debug_write(
                 f"AGGRESSIVE-ATTACK fired: {mp} scouts at {best_scout_location}"
@@ -398,6 +448,9 @@ class AlgoStrategy(gamelib.AlgoCore):
 
         # Find the best path for a pure scout rush and observe anticipated damage
         best_scout_location, lowest_damage = self.find_best_scout_spawn(game_state)
+        if best_scout_location is None:
+            gamelib.debug_write("scout rush skipped — no valid path to enemy edge this turn")
+            return
         
         # Calculate if our pure scout rush will get melted (Corrected to SCOUT health)
         scout_health = gamelib.GameUnit(SCOUT, game_state.config).max_health
@@ -475,12 +528,19 @@ class AlgoStrategy(gamelib.AlgoCore):
         # support-bonus logic entirely and route purely by min-damage.
         enemy_supports = [] if self.disable_support_targeting else self._enemy_support_locations(game_state)
 
+        # Enemy edge cells — used to validate a path actually reaches enemy side.
+        gm = game_state.game_map
+        enemy_edge_cells = set(map(tuple,
+            gm.get_edge_locations(gm.TOP_LEFT) + gm.get_edge_locations(gm.TOP_RIGHT)))
+
         best_location = None
         best_score = float('inf')
         best_raw_damage = float('inf')
 
         for loc in deploy_locations:
             path = game_state.find_path_to_edge(loc)
+            if not path or tuple(path[-1]) not in enemy_edge_cells:
+                continue  # dead-end — scout would self-destruct on our side
             damage_taken = 0
             supports_hit = set()  # dedupe across path tiles
 
@@ -505,11 +565,9 @@ class AlgoStrategy(gamelib.AlgoCore):
                 best_location = loc
                 best_raw_damage = damage_taken
 
-        # Fallback: no path scored or every path is harmless AND has no supports — pick a corner.
-        if best_location is None or (best_raw_damage == 0 and best_score == 0):
-            valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
-            best_location = random.choice(valid_corners or default_corners)
-
+        # If no valid path reaches an enemy edge, return None so caller can skip the attack.
+        if best_location is None:
+            return None, float('inf')
         return best_location, best_raw_damage
 
     def _enemy_support_locations(self, game_state):
