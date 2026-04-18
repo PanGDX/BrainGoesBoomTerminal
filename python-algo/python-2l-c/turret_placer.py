@@ -143,3 +143,22 @@ def candidate_cells(game_state):
             continue
         out.append(cell)
     return out
+
+
+def existing_turrets(game_state, turret_shorthand):
+    """Return upper-half cells where a non-upgraded turret currently sits."""
+    out = []
+    y_lo, y_hi = UPPER_HALF_Y_RANGE
+    for cell in _enumerate_friendly_diamond():
+        x, y = cell
+        if y < y_lo or y > y_hi:
+            continue
+        unit = game_state.contains_stationary_unit(list(cell))
+        if not unit:
+            continue
+        if unit.unit_type != turret_shorthand:
+            continue
+        if getattr(unit, "upgraded", False):
+            continue
+        out.append(cell)
+    return out

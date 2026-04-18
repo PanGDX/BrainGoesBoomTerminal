@@ -1,5 +1,20 @@
 import pytest
-from turret_placer import depth_factor, in_range, tile_weight, score_placement, score_upgrade, compute_threat_surface, candidate_cells
+from turret_placer import depth_factor, in_range, tile_weight, score_placement, score_upgrade, compute_threat_surface, candidate_cells, existing_turrets
+
+
+class _Unit:
+    def __init__(self, unit_type, upgraded=False):
+        self.unit_type = unit_type
+        self.upgraded = upgraded
+
+
+class _StubGameStateUnits:
+    def __init__(self, units):
+        # units: dict[(x,y)] -> _Unit or None
+        self._units = {tuple(k): v for k, v in units.items()}
+
+    def contains_stationary_unit(self, loc):
+        return self._units.get(tuple(loc))
 
 
 @pytest.mark.parametrize("y,expected", [
@@ -274,3 +289,29 @@ def test_candidate_cells_y_range_strict():
     cells = candidate_cells(gs)
     ys = {y for (_, y) in cells}
     assert ys == {8, 9, 10, 11, 12, 13}
+
+
+def test_existing_turrets_returns_only_unupgraded_turrets():
+    units = {
+        (2, 12): _Unit("TURRET", upgraded=False),
+        (6, 13): _Unit("TURRET", upgraded=True),  # already upgraded — exclude
+        (13, 12): _Unit("SUPPORT"),                # not a turret
+        (10, 10): _Unit("WALL"),                   # not a turret
+    }
+    gs = _StubGameStateUnits(units)
+    result = existing_turrets(gs, turret_shorthand="TURRET")
+    assert (2, 12) in result
+    assert (6, 13) not in result
+    assert (13, 12) not in result
+    assert (10, 10) not in result
+
+
+def test_existing_turrets_only_upper_half():
+    units = {
+        (10, 5): _Unit("TURRET"),   # below upper half — exclude
+        (10, 13): _Unit("TURRET"),  # in upper half
+    }
+    gs = _StubGameStateUnits(units)
+    result = existing_turrets(gs, turret_shorthand="TURRET")
+    assert (10, 5) not in result
+    assert (10, 13) in result
