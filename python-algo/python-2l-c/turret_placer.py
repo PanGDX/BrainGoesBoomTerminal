@@ -17,9 +17,11 @@ _DEPTH_FACTORS = {
 UPPER_HALF_Y_RANGE = (8, 13)  # inclusive on both ends
 
 _STRONG_CORNER_XS = frozenset({0, 1, 2, 3, 24, 25, 26, 27})
-_MID_FLANK_XS = frozenset({4, 5, 6, 21, 22, 23})
+_QUARTER_ZONE_XS = frozenset({4, 5, 6, 7, 8, 9, 18, 19, 20, 21, 22, 23})
+_MIDDLE_XS = frozenset({10, 11, 12, 13, 14, 15, 16, 17})
 STRONG_CORNER_BOOST = 1.5
-MID_FLANK_BOOST = 1.2
+QUARTER_ZONE_BOOST = 1.5
+MIDDLE_PENALTY = 0.8
 TENDENCY_MAX_MULTIPLIER = 0.5  # at |tendency|=1, favored side is × (1 + 0.5) = 1.5
 
 
@@ -30,11 +32,15 @@ def depth_factor(y):
 
 
 def corner_factor(x):
-    """Horizontal-position boost: stronger at outer columns, tapering inward."""
+    """Horizontal-position weighting: U-shape that boosts corners + quarter zones,
+    penalizes the middle. Pushes turrets to the flanks where enemy walkers
+    fan out, away from the center funnel that already gets natural threat-density."""
     if x in _STRONG_CORNER_XS:
         return STRONG_CORNER_BOOST
-    if x in _MID_FLANK_XS:
-        return MID_FLANK_BOOST
+    if x in _QUARTER_ZONE_XS:
+        return QUARTER_ZONE_BOOST
+    if x in _MIDDLE_XS:
+        return MIDDLE_PENALTY
     return 1.0
 
 

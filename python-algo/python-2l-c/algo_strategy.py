@@ -28,7 +28,7 @@ ANCHOR_TURRETS = [
     (6, 13), (12, 12), (13, 13), (14, 13), (15, 12),
     (21, 13), (2, 12), (25, 12),
 ]
-TURRET_SCORING_MODE = "path_freq"  # one of: "gap_fill", "stacking", "path_freq"
+TURRET_SCORING_MODE = "gap_fill"  # one of: "gap_fill", "stacking", "path_freq"
 
 # Scout-spawn picker bonus per enemy SUPPORT in scout range along the path.
 # Higher = more aggressive support-hunting (tolerate more turret damage to land

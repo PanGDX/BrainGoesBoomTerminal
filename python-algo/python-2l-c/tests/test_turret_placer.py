@@ -114,13 +114,13 @@ def test_score_placement_no_threat_in_range_returns_zero():
 def test_score_placement_in_range_path_freq():
     # Turret at (10,12), tile (10,13) → distance 1.0, in range.
     # path_freq weight: threat_count[10,13]=4 / max=4 → weight 1.0
-    # depth_factor(12) = 0.95
-    # Expected: 1.0 * 0.95 = 0.95
+    # depth_factor(12) = 0.95, corner_factor(10) = 0.8 (middle penalty)
+    # Expected: 0.95 * 0.8 * 1.0 = 0.76
     cell = (10, 12)
     threat_count = {(10, 13): 4, (20, 13): 4}
     coverage = {(10, 13): 0, (20, 13): 0}
     score = score_placement(cell, threat_count, coverage, attack_range=2.5, mode="path_freq")
-    assert score == pytest.approx(0.95)
+    assert score == pytest.approx(0.76)
 
 
 def test_score_placement_gap_fill_prefers_uncovered():
@@ -134,14 +134,14 @@ def test_score_placement_gap_fill_prefers_uncovered():
 
 
 def test_score_placement_depth_decay_applies():
-    # Same neighbor tile, two candidate y rows.
+    # Same neighbor tile, two candidate y rows. Both at x=10 (middle penalty 0.8).
     threat_count = {(10, 13): 1}
     coverage = {(10, 13): 0}
     s_y13 = score_placement((10, 13), threat_count, coverage, 2.5, "stacking")
     s_y8 = score_placement((10, 8), threat_count, coverage, 2.5, "stacking")
-    # (10,13) is in range of itself, depth_factor(13)=0.90 → 0.90.
+    # (10,13) is in range of itself, depth_factor(13)=0.90 × corner(10)=0.8 → 0.72.
     # (10,8) is distance 5 from (10,13), out of 2.5 range → 0.
-    assert s_y13 == pytest.approx(0.90)
+    assert s_y13 == pytest.approx(0.72)
     assert s_y8 == 0.0
 
 
@@ -463,8 +463,10 @@ from turret_placer import corner_factor, tendency_factor
 @pytest.mark.parametrize("x,expected", [
     (0, 1.5), (1, 1.5), (2, 1.5), (3, 1.5),
     (24, 1.5), (25, 1.5), (26, 1.5), (27, 1.5),
-    (4, 1.2), (5, 1.2), (6, 1.2), (21, 1.2), (22, 1.2), (23, 1.2),
-    (7, 1.0), (13, 1.0), (14, 1.0), (20, 1.0),
+    (4, 1.5), (5, 1.5), (6, 1.5), (7, 1.5), (8, 1.5), (9, 1.5),
+    (18, 1.5), (19, 1.5), (20, 1.5), (21, 1.5), (22, 1.5), (23, 1.5),
+    (10, 0.8), (11, 0.8), (12, 0.8), (13, 0.8),
+    (14, 0.8), (15, 0.8), (16, 0.8), (17, 0.8),
 ])
 def test_corner_factor_table(x, expected):
     assert corner_factor(x) == expected
