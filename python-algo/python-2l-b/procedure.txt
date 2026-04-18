@@ -18,7 +18,7 @@
 	{ "type": "spawn", "unit": "WALL", "location": [0, 13] },
 	{ "type": "spawn", "unit": "WALL", "location": [27, 13] },
 	{ "type": "spawn", "unit": "TURRET", "location": [1, 13] },
-	{ "type": "spawn", "unit": "TURRET", "location": [27, 13] },
+	{ "type": "spawn", "unit": "TURRET", "location": [26, 13] },
 	{ "type": "spawn", "unit": "TURRET", "location": [3, 13] },
 	{ "type": "spawn", "unit": "TURRET", "location": [24, 13] },
 	// front line middle
@@ -40,9 +40,22 @@
     { "type": "spawn", "unit": "TURRET", "location": [21, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [4, 11] },
     { "type": "spawn", "unit": "TURRET", "location": [23, 11] },
+	// funnel
     { "type": "spawn", "unit": "TURRET", "location": [5, 10] },
-    { "type": "spawn", "unit": "TURRET", "location": [22, 10] }
+    { "type": "spawn", "unit": "TURRET", "location": [22, 10] },
+    { "type": "spawn", "unit": "TURRET", "location": [9, 10] },
+    { "type": "spawn", "unit": "TURRET", "location": [9, 11] },
+    { "type": "spawn", "unit": "TURRET", "location": [18, 10] },
+    { "type": "spawn", "unit": "TURRET", "location": [18, 11] }
   ],
+  "funnel": [
+    { "type": "spawn", "unit": "TURRET", "location": [11, 4] },
+    { "type": "spawn", "unit": "TURRET", "location": [12, 3] },
+    { "type": "spawn", "unit": "TURRET", "location": [13, 2] },
+    { "type": "spawn", "unit": "TURRET", "location": [14, 2] },
+    { "type": "spawn", "unit": "TURRET", "location": [15, 3] },
+    { "type": "spawn", "unit": "TURRET", "location": [16, 4] }
+  ]
   "supportstructure": [
 	// supports are OP 
 	{ "type": "spawn", "unit": "SUPPORT", "location": [13, 11] },

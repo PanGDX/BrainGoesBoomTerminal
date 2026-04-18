@@ -6,7 +6,6 @@ from sys import maxsize
 import json
 import os
 
-
 """
 Most of the algo code you write will be in this file unless you create new
 modules yourself. Start by modifying the 'on_turn' function.
@@ -100,11 +99,8 @@ class AlgoStrategy(gamelib.AlgoCore):
 
 
     def starter_strategy(self, game_state):
-        # self.parse_game_state(game_state)
         self.build_defences(game_state)
         self.execute_scout_rush(game_state)
-        # self.execute_turn_strategy(game_state)
-        # self.evaluate_next_turn_strategy(game_state)
 
 
     def parse_game_state(self, game_state):
@@ -130,7 +126,6 @@ class AlgoStrategy(gamelib.AlgoCore):
         if path == None:
             return False 
 
-    
         if len(path) < 10:
             return True
         for i in range(10):
@@ -205,11 +200,9 @@ class AlgoStrategy(gamelib.AlgoCore):
         locations = []
         for x in range(game_state.ARENA_SIZE):
             if x < game_state.HALF_ARENA:
-                # 0 - 13
                 for y in range(game_state.HALF_ARENA - x - 1, game_state.HALF_ARENA):
                     locations.append([x, y])
             else:
-                # 14 - 27
                 for y in range(x - 14, game_state.HALF_ARENA):
                     locations.append([x, y])
         return locations
@@ -233,31 +226,16 @@ class AlgoStrategy(gamelib.AlgoCore):
         """
         stop_flag = False
 
-        # 1. Process Spawns by Priority
-        # We iterate in this specific order to ensure resources are spent on important units first
         for priority in ["start", "frontline","catchline", "supportstructure"]:
             if stop_flag:
                 break
             
-            # Get the list for the current priority, default to empty list if key missing
             job_list = self.build_order.get(priority, [])
 
             for build_job in job_list:
                 unit = eval(build_job["unit"])
                 location = build_job["location"]
 
-                # # Logic for removing walls for specific attack strategies
-                # if self.turn_strategy == "attack_left" and location == ATTACK_LEFT_REMOVE_WALL_LOCATION:
-                #     if self.attack_turn == 0:
-                #         game_state.attempt_remove(ATTACK_LEFT_REMOVE_WALL_LOCATION)
-                #     continue 
-                    
-                # if self.turn_strategy == "attack_right" and location == ATTACK_RIGHT_REMOVE_WALL_LOCATION:
-                #     if self.attack_turn == 0:
-                #         game_state.attempt_remove(ATTACK_RIGHT_REMOVE_WALL_LOCATION)
-                #     continue 
-
-                # Resource check: Cost of spawning
                 if game_state.get_resource(SP) - game_state.type_cost(unit)[0] < self.min_sp_to_save:
                     stop_flag = True
                     break
@@ -266,69 +244,85 @@ class AlgoStrategy(gamelib.AlgoCore):
                 if build_job["type"] == "upgrade":
                     game_state.attempt_upgrade(location)
 
-        # # 2. Process Upgrades
-        # # This assumes you have loaded the separate upgrade JSON into self.upgrade_order
-        # if not stop_flag:
-        #     for upgrade_job in self.upgrade_order:
-        #         unit = eval(upgrade_job["unit"])
-        #         location = upgrade_job["location"]
-
-        #         # Skip upgrades for walls that are being removed for the attack
-        #         if self.turn_strategy == "attack_left" and location == ATTACK_LEFT_REMOVE_WALL_LOCATION:
-        #             continue
-        #         if self.turn_strategy == "attack_right" and location == ATTACK_RIGHT_REMOVE_WALL_LOCATION:
-        #             continue
-
-        #         # Resource check: Cost of upgrading
-        #         if game_state.get_resource(SP) - game_state.type_cost(unit, upgrade=True)[0] < self.min_sp_to_save:
-        #             break # Stop upgrading if we run out of SP
-                
-        #         game_state.attempt_upgrade(location)
-
-    # def execute_turn_strategy(self, game_state):
-    #     if self.turn_strategy == "defend":
-    #         pass
-    #     elif self.turn_strategy == "attack_left":
-    #         ideal_first_group = self.choose_number_of_scouts_in_first_group_based_on_enemy_edge_strength(self.enemy_left_edge_strength)
-    #         # Bound logic internally so we never evaluate MP out-of-range bounds
-    #         first_group_size = min(self.my_MP, ideal_first_group)
-    #         self.spawn_scouts(game_state, ATTACK_LEFT_SCOUT_FIRST_GROUP_LOCATION, first_group_size)
-            
-    #         second_group_size = max(0, self.my_MP - first_group_size)
-    #         if second_group_size > 0:
-    #             self.spawn_scouts(game_state, ATTACK_LEFT_SCOUT_SECOND_GROUP_LOCATION, second_group_size)
-                
-    #     else:
-    #         ideal_first_group = self.choose_number_of_scouts_in_first_group_based_on_enemy_edge_strength(self.enemy_right_edge_strength)
-    #         first_group_size = min(self.my_MP, ideal_first_group)
-    #         self.spawn_scouts(game_state, ATTACK_RIGHT_SCOUT_FIRST_GROUP_LOCATION, first_group_size)
-            
-    #         second_group_size = max(0, self.my_MP - first_group_size)
-    #         if second_group_size > 0:
-    #             self.spawn_scouts(game_state, ATTACK_RIGHT_SCOUT_SECOND_GROUP_LOCATION, second_group_size)
-
 
     def execute_scout_rush(self, game_state):
         """
         Bomb rush the gap in defense using Scouts.
+        If the path is too heavily defended, save up MP and use the alternative 
+        Demolisher + Scout strategy.
         """
         mp = int(game_state.get_resource(MP))
         
-        # Wait until we have enough MP to make the rush effective
-        if mp >= 5:
-            best_location = self.find_best_scout_spawn(game_state)
-            
-            # Spend all available MP on scouts at the most optimal location
-            game_state.attempt_spawn(SCOUT, best_location, 1000)
-            gamelib.debug_write(f"Scout rush deployed at {best_location} with {mp} MP")
+        # We need at least 5 MP for any rush to be effective
+        if mp < 5:
+            return
+
+        # Find the best path for a pure scout rush and observe anticipated damage
+        best_scout_location, lowest_damage = self.find_best_scout_spawn(game_state)
+        
+        # Calculate if our pure scout rush will get melted (Corrected to SCOUT health)
+        scout_health = gamelib.GameUnit(SCOUT, game_state.config).max_health
+        total_scout_health = mp * scout_health
+
+        funnel_locations = [[11, 4], [12, 3], [13, 2], [14, 2], [15, 3], [16, 4]]
+        funnel_built = True
+        for loc in funnel_locations:
+            unit = game_state.contains_stationary_unit(loc)
+            # If there's no unit, or the unit there isn't a wall, try to build it
+            if not unit or unit.unit_type != WALL:
+                funnel_built = False # Even if we just spawned it, wait until next turn to be safe
+
+        
+        if lowest_damage > total_scout_health * 0.8 and funnel_built:
+            gamelib.debug_write(f"Picking Strategy: funnel")
+            # Path is heavily defended. Run the alternative strategy.
+            # Requires waiting until we have at least 8 MP for the Demolisher + Scouts
+            if mp >= 8:
+                left_strength = self.compute_enemy_left_edge_defense_strength(game_state)
+                right_strength = self.compute_enemy_right_edge_defense_strength(game_state)
+                
+                # Determine which side to attack
+                # (Spawning on the left edges targets top-right, Spawning on right targets top-left)
+                if right_strength < left_strength:
+                    # Attack right side by deploying on the left edge
+                    demo_loc = [11,2]
+                    scout_loc = [10, 3]
+                else:
+                    # Attack left side by deploying on the right edge
+                    demo_loc = [16, 2]
+                    scout_loc = [17, 3]
+                
+                # Ensure the specific deployment locations aren't blocked by our own walls
+                if game_state.contains_stationary_unit(demo_loc):
+                    game_state.attempt_remove(demo_loc)
+                if game_state.contains_stationary_unit(scout_loc):
+                    game_state.attempt_remove(scout_loc)
+
+                # Deduct demolisher cost to determine how many scouts we can spam 
+                # (Will act as vanguard/tank ahead of demolisher)
+                demo_cost = game_state.type_cost(DEMOLISHER)[0]
+                scouts_to_spawn = mp - demo_cost
+                
+                # Execute alternative strategy!
+                game_state.attempt_spawn(SCOUT, scout_loc, scouts_to_spawn)
+                game_state.attempt_spawn(DEMOLISHER, demo_loc, 1)
+                
+                gamelib.debug_write(f"Alternative Strategy deployed: Demolisher at {demo_loc}, {scouts_to_spawn} Scouts at {scout_loc}")
+            else:
+                gamelib.debug_write(f"Scouts would melt. Waiting for MP >= 8 for alternative strategy. Current MP: {mp}")
+        else:
+            # Path is safe enough to deploy normal pure scout rush
+            game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
+            gamelib.debug_write(f"Scout rush deployed at {best_scout_location} with {mp} MP")
+
 
     def find_best_scout_spawn(self, game_state):
         """
         Simulate pathing from all valid edge locations to find the path that takes 
-        the LEAST damage from enemy turrets. Defaults to corners.
+        the LEAST damage from enemy turrets. Returns the best location alongside the lowest damage taken.
         """
-        # Get all friendly deployable edges
-        friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
+        friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + \
+                         game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
         
         # Filter out edges that we blocked with our own walls/turrets
         deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
@@ -337,7 +331,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         default_corners = [[13, 0], [14, 0]]
         
         if not deploy_locations:
-            return random.choice(default_corners)
+            return random.choice(default_corners), float('inf')
 
         best_location = None
         lowest_damage = float('inf')
@@ -358,15 +352,16 @@ class AlgoStrategy(gamelib.AlgoCore):
                 lowest_damage = damage_taken
                 best_location = loc
                 
-        # If the lowest damage path still gets absolutely melted (e.g., heavily fortified board),
-        # or if the board is empty and damage is 0 everywhere, default to the corners.
-        if lowest_damage == 0 or lowest_damage > (turret_damage * 10): 
-            # Make sure our default corners aren't blocked by our own defenses
+        # If no damage is taken or if no path returns anything, default back to corner paths
+        if best_location is None or lowest_damage == 0: 
             valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
             if valid_corners:
-                return random.choice(valid_corners)
+                best_location = random.choice(valid_corners)
+            else:
+                best_location = random.choice(default_corners)
                 
-        return best_location
+        return best_location, lowest_damage
+
 
     def spawn_interceptor(self, game_state, location, number):
         game_state.attempt_spawn(INTERCEPTOR, location, math.floor(number))
@@ -385,25 +380,6 @@ class AlgoStrategy(gamelib.AlgoCore):
     
     def choose_number_of_demolishers_based_on_enemy_edge_strength(self, strength):
         return min(3 + math.floor(strength / 10), 5)
-
-
-    # def evaluate_next_turn_strategy(self, game_state):
-    #     self.my_MP = game_state.get_resource(MP, 0)
-    #     if self.attack_turn == 0 and self.turn_strategy != "defend":
-    #         self.attack_turn = 1
-    #     elif self.my_MP < 4:
-    #         self.turn_strategy = "defend"
-    #     elif self.my_MP >= 5 or self.my_MP > self.enemy_MP:
-    #         if self.compute_enemy_left_edge_defense_strength(game_state) > self.compute_enemy_right_edge_defense_strength(game_state):
-    #             self.turn_strategy = "attack_right"
-    #             self.attack_turn = 0
-    #             game_state.attempt_remove(ATTACK_RIGHT_REMOVE_WALL_LOCATION)
-    #         else:
-    #             self.turn_strategy = "attack_left"
-    #             self.attack_turn = 0 # Fixed missing attack_turn = 0 implementation
-    #             game_state.attempt_remove(ATTACK_LEFT_REMOVE_WALL_LOCATION)
-    #     else:
-    #         self.turn_strategy = "defend"
 
 
 if __name__ == "__main__":
