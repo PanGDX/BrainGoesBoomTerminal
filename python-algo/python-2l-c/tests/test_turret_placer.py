@@ -368,6 +368,8 @@ class _OrchestratorStub:
         return self._sp
 
     def type_cost(self, unit_type, upgrade=False):
+        # Regression guard: catches re-introduction of hardcoded "TURRET" literals.
+        assert unit_type == "TURRET", f"expected unit_type='TURRET' (the test stub's shorthand), got {unit_type!r}"
         # Return [SP, MP] cost. Index 0 (SP) is what placer reads.
         if upgrade:
             return [self.UPGRADE_COST, 0]
