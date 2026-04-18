@@ -198,7 +198,7 @@ def place_turrets(
     coverage = init_coverage(threat, list(anchor_locations), raw_range)
 
     # --- Phase 3: Greedy placement ---
-    turret_cost = game_state.type_cost("TURRET")[SP_RESOURCE_INDEX]
+    turret_cost = game_state.type_cost(turret_shorthand)[SP_RESOURCE_INDEX]
     stopped = "budget_exhausted"
     while game_state.get_resource(SP_RESOURCE_INDEX) >= turret_cost and candidates:
         best, best_score = None, min_placement_score
@@ -220,7 +220,7 @@ def place_turrets(
                 coverage[tile] = coverage.get(tile, 0) + 1
 
     # --- Phase 4: Upgrade fallback ---
-    upgrade_cost = game_state.type_cost("TURRET", upgrade=True)[SP_RESOURCE_INDEX]
+    upgrade_cost = game_state.type_cost(turret_shorthand, upgrade=True)[SP_RESOURCE_INDEX]
     upgrade_pool = list(anchor_locations) + placed
     # Re-fetch existing turrets in case anchors weren't passed and we want to upgrade
     # whatever turrets are present in the upper half (defensive).
