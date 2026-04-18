@@ -1,5 +1,5 @@
 import pytest
-from turret_placer import depth_factor, in_range, tile_weight, score_placement
+from turret_placer import depth_factor, in_range, tile_weight, score_placement, score_upgrade
 
 
 @pytest.mark.parametrize("y,expected", [
@@ -128,3 +128,48 @@ def test_score_placement_depth_decay_applies():
     # (10,8) is distance 5 from (10,13), out of 2.5 range → 0.
     assert s_y13 == pytest.approx(0.90)
     assert s_y8 == 0.0
+
+
+# Damage constants from the spec
+RAW_DMG = 6
+UP_DMG = 20
+
+
+def test_score_upgrade_in_raw_only():
+    # Tile at distance 1.0 from turret — already in raw 2.5 range.
+    # Gain per tile: (UP_DMG - RAW_DMG) * weight = 14 * 1.0
+    threat_count = {(10, 13): 1}
+    coverage = {(10, 13): 1}
+    s = score_upgrade((10, 12), threat_count, coverage, raw_range=2.5, upgraded_range=3.5, mode="path_freq")
+    assert s == pytest.approx(14.0)
+
+
+def test_score_upgrade_in_annulus_only():
+    # Tile at distance 3.0 from turret — outside raw, inside upgraded.
+    # Gain: UP_DMG * weight = 20 * 1.0
+    threat_count = {(13, 13): 1}
+    coverage = {(13, 13): 0}
+    s = score_upgrade((10, 13), threat_count, coverage, raw_range=2.5, upgraded_range=3.5, mode="path_freq")
+    assert s == pytest.approx(20.0)
+
+
+def test_score_upgrade_outside_upgraded_range_zero():
+    threat_count = {(20, 13): 1}
+    coverage = {(20, 13): 0}
+    s = score_upgrade((5, 13), threat_count, coverage, raw_range=2.5, upgraded_range=3.5, mode="path_freq")
+    assert s == 0.0
+
+
+def test_score_upgrade_no_depth_factor_applied():
+    # depth_factor must NOT scale upgrade scores (turret already exists at its location).
+    threat_count = {(10, 13): 1}
+    coverage = {(10, 13): 1}
+    s_y8 = score_upgrade((10, 8), threat_count, coverage, raw_range=2.5, upgraded_range=3.5, mode="path_freq")
+    # (10,8) → (10,13) distance 5.0, outside upgraded 3.5 → 0
+    assert s_y8 == 0.0
+    # Test a tile actually in range with low-y turret:
+    threat_count2 = {(10, 9): 1}
+    coverage2 = {(10, 9): 1}
+    s_y8_close = score_upgrade((10, 8), threat_count2, coverage2, raw_range=2.5, upgraded_range=3.5, mode="path_freq")
+    # Tile in raw range, weight=1.0, gain=14, NO depth multiplier
+    assert s_y8_close == pytest.approx(14.0)

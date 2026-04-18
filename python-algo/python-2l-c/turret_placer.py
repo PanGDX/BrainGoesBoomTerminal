@@ -61,3 +61,30 @@ def score_placement(cell, threat_count, coverage, attack_range, mode):
         if in_range(cell, tile, attack_range):
             total += tile_weight(tile, coverage, threat_count, mode)
     return df * total
+
+
+RAW_TURRET_DAMAGE = 6
+UPGRADED_TURRET_DAMAGE = 20
+
+
+def score_upgrade(turret_loc, threat_count, coverage, raw_range, upgraded_range, mode):
+    """Damage gain from upgrading the turret at `turret_loc`.
+
+    Two contributions, summed:
+      - tiles already in raw range: (upgraded_dmg - raw_dmg) * weight
+      - tiles in the annulus (raw_range < d <= upgraded_range): upgraded_dmg * weight
+
+    No depth_factor — the turret already sits where it sits.
+    """
+    raw_gain_factor = UPGRADED_TURRET_DAMAGE - RAW_TURRET_DAMAGE
+    annulus_gain_factor = UPGRADED_TURRET_DAMAGE
+    total = 0.0
+    for tile in threat_count:
+        w = tile_weight(tile, coverage, threat_count, mode)
+        if w == 0:
+            continue
+        if in_range(turret_loc, tile, raw_range):
+            total += raw_gain_factor * w
+        elif in_range(turret_loc, tile, upgraded_range):
+            total += annulus_gain_factor * w
+    return total
