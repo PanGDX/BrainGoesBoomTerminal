@@ -6,8 +6,6 @@ from sys import maxsize
 import json
 import os
 
-from turret_placer import place_turrets
-
 """
 Most of the algo code you write will be in this file unless you create new
 modules yourself. Start by modifying the 'on_turn' function.
@@ -20,38 +18,15 @@ Advanced strategy tips:
   board states. Though, we recommended making a copy of the map to preserve 
   the actual current map state.
 """
-
-# Anchor turrets — spawned by the build-order `start` tier (python-2l-b's
-# version). Must match TURRET entries in build-order.json `start` exactly.
-ANCHOR_TURRETS = [
-    (2, 13), (6, 13), (12, 12), (13, 13),
-    (14, 13), (15, 12), (21, 13), (25, 13),
-]
-# Curated turret positions — all non-anchor turret positions from 2l-b's
-# frontline, catchline, supportstructure tiers in upper-half y ∈ [8, 13].
-# The static build-order tries these in tier order; the placer picks the
-# highest-priority unfilled ones each turn via adaptive scoring.
-CURATED_TURRET_POSITIONS = [
-    # frontline — y=13 belt
-    (1, 13), (26, 13), (3, 13), (24, 13),
-    (9, 13), (18, 13), (10, 13), (17, 13),
-    (11, 13), (16, 13),
-    # catchline — y=10..12 second row
-    (3, 12), (24, 12), (6, 12), (21, 12),
-    (4, 11), (23, 11),
-    (5, 10), (22, 10), (9, 10), (9, 11),
-    (18, 10), (18, 11),
-    # supportstructure turrets — upper half (y=8..12)
-    (9, 12), (10, 12), (17, 12), (18, 12),
-    (7, 8), (20, 8),
-]
-
-# Scout-spawn picker bonus per enemy SUPPORT in scout range along the path.
-# Higher = more aggressive support-hunting (tolerate more turret damage to land
-# the rush near supports). Upgraded supports count UPGRADED_MULT × this bonus.
 SUPPORT_TARGET_BONUS = 30
 SUPPORT_TARGET_UPGRADED_MULT = 2
-SCOUT_ATTACK_RANGE = 3.5  # game-configs.json scout attackRange
+
+# Adaptive add-ons from python-2l-d:
+# - 1-turn breach-cell memory triggers force-defend turrets near attacked corners.
+# - Aggressive-attack: enemy lost ≥60% supports last turn → commit all MP at min-damage path.
+AGGRESSIVE_ATTACK_LOSS_RATIO = 0.60
+AGGRESSIVE_ATTACK_MIN_PRIOR = 3
+
 
 class AlgoStrategy(gamelib.AlgoCore):
     def __init__(self):
@@ -59,6 +34,15 @@ class AlgoStrategy(gamelib.AlgoCore):
         seed = random.randrange(maxsize)
         random.seed(seed)
         gamelib.debug_write('Random seed: {}'.format(seed))
+
+        # Dictionary to track precise enemy scout spawn locations
+        self.enemy_scout_spawns = {}
+
+        # Adaptive layer state
+        self._pending_breach_cells = set()
+        self.last_turn_breach_cells = set()
+        self.aggressive_attack = False
+        self.last_enemy_support_count = 0
 
     def on_game_start(self, config):
         """ 
@@ -73,6 +57,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         global ATTACK_LEFT_SCOUT_FIRST_GROUP_LOCATION, ATTACK_LEFT_SCOUT_SECOND_GROUP_LOCATION
         global ATTACK_RIGHT_SCOUT_FIRST_GROUP_LOCATION, ATTACK_RIGHT_SCOUT_SECOND_GROUP_LOCATION
         global ATTACK_LEFT_REMOVE_WALL_LOCATION, ATTACK_RIGHT_REMOVE_WALL_LOCATION
+        
         WALL = config["unitInformation"][0]["shorthand"]
         SUPPORT = config["unitInformation"][1]["shorthand"]
         TURRET = config["unitInformation"][2]["shorthand"]
@@ -82,8 +67,8 @@ class AlgoStrategy(gamelib.AlgoCore):
         MP = 1
         SP = 0
 
-        REFUND_THRESHOLD_WALL = 0.7
-        REFUND_THRESHOLD_TURRET = 0.5
+        REFUND_THRESHOLD_WALL = 0.5
+        REFUND_THRESHOLD_TURRET = 0.2
         with open(os.path.join(os.path.dirname(__file__), 'build-order.json'), 'r') as f:
             self.build_order = json.loads(f.read())
         with open(os.path.join(os.path.dirname(__file__), 'upgrade-order.json'), 'r') as f:
@@ -103,7 +88,6 @@ class AlgoStrategy(gamelib.AlgoCore):
         ATTACK_LEFT_REMOVE_WALL_LOCATION = [6, 7]
         ATTACK_RIGHT_REMOVE_WALL_LOCATION = [21, 8]
 
-        # Important characteristics of a game state, will be parsed in self.parse_game_state()
         self.enemy_left_edge_strength = 100
         self.enemy_right_edge_strength = 100
         self.enemy_left_edge_blocked = True
@@ -112,73 +96,30 @@ class AlgoStrategy(gamelib.AlgoCore):
         self.enemy_right_edge_misdirecting = False
         self.my_MP = 0
         self.enemy_MP = 0
-        self.turn_strategy = "defend" # defend, attack_left, attack_right
-        self.attack_turn = 0 # first need to remove the defense then channel in
+        self.turn_strategy = "defend" 
+        self.attack_turn = 0 
 
-        self.min_sp_to_save = 0 # at least this amount of SP left in case need to repair for next turn
+        self.min_sp_to_save = 0 
 
-        # Aggressive-attack trigger: when enemy lost ≥60% of supports last turn,
-        # commit all MP as scouts at the weakest enemy spawn-cell next turn
-        # (predicting they'll spend SP rebuilding supports instead of defenses).
-        self.last_enemy_support_count = 0
-        self.aggressive_attack = False
-        self.AGGRESSIVE_ATTACK_LOSS_RATIO = 0.60
-        self.AGGRESSIVE_ATTACK_MIN_PRIOR = 3  # need ≥3 supports last turn to trigger
-
-        # Last-turn enemy spawn memory: remember cells where enemy deployed mobile
-        # units last turn, boost defense along those paths this turn. Only ONE
-        # turn of memory.
-        self._pending_enemy_spawns = set()    # accumulates during current turn
-        self.last_turn_enemy_spawns = set()   # snapshot used this turn
-
-        # Support-attack failure tracker: if 3 consecutive scout rushes fail
-        # to destroy any enemy support, switch attack routing to pure min-damage.
-        self.support_attack_attempts_since_kill = 0
-        self.disable_support_targeting = False
-        self.MAX_SUPPORT_ATTACK_ATTEMPTS = 3
-
-        # Breach-cell tracking: cells where enemy walkers reached our edge last
-        # turn (scored HP damage). Used to force-place defensive turrets before
-        # the greedy placer runs. 1-turn memory.
-        self._pending_breach_cells = set()
-        self.last_turn_breach_cells = set()
-
-
-    def on_turn(self, turn_state):
-        """
-        This function is called every turn with the game state wrapper as
-        an argument. The wrapper stores the state of the arena and has methods
-        for querying its state, allocating your current resources as planned
-        unit deployments, and transmitting your intended deployments to the
-        game engine.
-        """
-        game_state = gamelib.GameState(self.config, turn_state)
-        # Snapshot last turn's memory at the start of each turn.
-        self.last_turn_enemy_spawns = set(self._pending_enemy_spawns)
-        self._pending_enemy_spawns.clear()
-        self.last_turn_breach_cells = set(self._pending_breach_cells)
-        self._pending_breach_cells.clear()
-        self._update_aggressive_attack_trigger(game_state)
-        self.starter_strategy(game_state)
-
-        game_state.submit_turn()
 
     def on_action_frame(self, turn_string):
-        """Accumulate enemy spawn cells and breach cells into pending buffers.
-        Snapshotted by on_turn at the start of each new turn.
+        """
+        Intercepts action frames to map enemy scout spawn locations and breach cells.
         """
         state = json.loads(turn_string)
         events = state.get("events", {})
-        for spawn in events.get("spawn", []):
-            if len(spawn) < 4:
-                continue
-            location, unit_type, _uid, player = spawn[0], spawn[1], spawn[2], spawn[3]
-            # action-frame convention: player==2 is enemy, unit_type 3/4/5 = SCOUT/DEMO/INTERCEPTOR
-            if player == 2 and unit_type in (3, 4, 5):
-                self._pending_enemy_spawns.add(tuple(location))
-        # Breach events: format [location, damage, unit_type, unit_id, player]
-        # where player is the OWNER of the breaching walker. player==2 = enemy
-        # breaching us (location on our edge). player==1 = us breaching them.
+
+        # turnInfo[0] == 1 implies Action Phase, turnInfo[2] == 0 implies first action frame
+        if state["turnInfo"][0] == 1 and state["turnInfo"][2] == 0:
+            for spawn in events.get("spawn", []):
+                loc = spawn[0]
+                unit_type = spawn[1]
+                if unit_type == 3 and loc[1] >= 14:
+                    key = f"{loc[0]}:{loc[1]}"
+                    self.enemy_scout_spawns[key] = self.enemy_scout_spawns.get(key, 0) + 1
+
+        # Track breach events on EVERY action frame (they fire when walkers reach edges).
+        # Format: [location, damage, unit_type, unit_id, player]; player==2 = enemy breaching us.
         for breach in events.get("breach", []):
             if len(breach) < 5:
                 continue
@@ -186,8 +127,32 @@ class AlgoStrategy(gamelib.AlgoCore):
             if player == 2:
                 self._pending_breach_cells.add(tuple(location))
 
+
+    def on_turn(self, turn_state):
+        game_state = gamelib.GameState(self.config, turn_state)
+
+        # Snapshot adaptive memory at start of turn, clear pending buffer.
+        self.last_turn_breach_cells = set(self._pending_breach_cells)
+        self._pending_breach_cells.clear()
+
+        try:
+            self.parse_game_state(game_state)
+        except Exception as e:
+            gamelib.debug_write(f"Exception caught in parse_game_state: {e}")
+
+        try:
+            self._update_aggressive_attack_trigger(game_state)
+        except Exception as e:
+            gamelib.debug_write(f"Exception caught in aggressive-attack trigger: {e}")
+
+        try:
+            self.starter_strategy(game_state)
+        except Exception as e:
+            gamelib.debug_write(f"Exception caught in starter_strategy: {e}")
+
+        game_state.submit_turn()
+
     def _count_enemy_supports(self, game_state):
-        """Count enemy SUPPORT structures currently on the board."""
         count = 0
         for x in range(28):
             y_max = x + 14 if x < 14 else 41 - x
@@ -198,20 +163,11 @@ class AlgoStrategy(gamelib.AlgoCore):
         return count
 
     def _update_aggressive_attack_trigger(self, game_state):
-        """Compare current enemy support count vs last turn's; if loss ≥60%, fire
-        AGGRESSIVE trigger. Also reset the support-attack-failure counter any
-        time a support gets destroyed (we can attribute the kill to our attack)."""
         current = self._count_enemy_supports(game_state)
-        if current < self.last_enemy_support_count:
-            # At least one enemy support destroyed since last turn → reset failure tracking.
-            self.support_attack_attempts_since_kill = 0
-            if self.disable_support_targeting:
-                gamelib.debug_write("support-targeting re-enabled (support kill detected)")
-            self.disable_support_targeting = False
-        if (self.last_enemy_support_count >= self.AGGRESSIVE_ATTACK_MIN_PRIOR
+        if (self.last_enemy_support_count >= AGGRESSIVE_ATTACK_MIN_PRIOR
                 and current < self.last_enemy_support_count):
             loss = (self.last_enemy_support_count - current) / self.last_enemy_support_count
-            if loss >= self.AGGRESSIVE_ATTACK_LOSS_RATIO:
+            if loss >= AGGRESSIVE_ATTACK_LOSS_RATIO:
                 self.aggressive_attack = True
                 gamelib.debug_write(
                     f"AGGRESSIVE-ATTACK trigger: enemy supports {self.last_enemy_support_count}→{current} "
@@ -219,9 +175,34 @@ class AlgoStrategy(gamelib.AlgoCore):
                 )
         self.last_enemy_support_count = current
 
+    def _force_defend_breaches(self, game_state):
+        """Force-spawn up to 2 turrets near each breach cell from last turn."""
+        if not self.last_turn_breach_cells:
+            return
+        turret_cost = game_state.type_cost(TURRET)[0]
+        for bx, _by in self.last_turn_breach_cells:
+            placed = 0
+            candidates = [(bx, 13), (bx, 12), (bx - 1, 13), (bx + 1, 13), (bx - 1, 12), (bx + 1, 12)]
+            for cx, cy in candidates:
+                if placed >= 2:
+                    break
+                if game_state.get_resource(SP) < turret_cost:
+                    return
+                if not (0 <= cx <= 27 and 8 <= cy <= 13):
+                    continue
+                if game_state.contains_stationary_unit([cx, cy]):
+                    continue
+                sent = game_state.attempt_spawn(TURRET, [cx, cy])
+                if sent > 0:
+                    placed += 1
+                    gamelib.debug_write(
+                        f"FORCE-DEFEND: turret at ({cx},{cy}) for breach at ({bx},{_by})"
+                    )
+
 
     def starter_strategy(self, game_state):
         self.build_defences(game_state)
+        # self.deploy_anti_scout_interceptor(game_state) # --- NEW: Deploys preemptive interceptor
         self.execute_scout_rush(game_state)
 
 
@@ -313,50 +294,10 @@ class AlgoStrategy(gamelib.AlgoCore):
         return strength
 
 
-    def _force_defend_breaches(self, game_state):
-        """For each breach cell from last turn, force-spawn up to 2 turrets near it.
-        Bypasses the curated pool — direct placement at (bx, 13) and (bx, 12) by default,
-        with adjacent x fallbacks if those are occupied or out of diamond.
-        """
-        if not self.last_turn_breach_cells:
-            return
-        turret_cost = game_state.type_cost(TURRET)[0]
-        for bx, _by in self.last_turn_breach_cells:
-            placed = 0
-            candidates = [(bx, 13), (bx, 12), (bx - 1, 13), (bx + 1, 13), (bx - 1, 12), (bx + 1, 12)]
-            for cx, cy in candidates:
-                if placed >= 2:
-                    break
-                if game_state.get_resource(SP) < turret_cost:
-                    return
-                if not (0 <= cx <= 27 and 8 <= cy <= 13):
-                    continue
-                if game_state.contains_stationary_unit([cx, cy]):
-                    continue
-                sent = game_state.attempt_spawn(TURRET, [cx, cy])
-                if sent > 0:
-                    placed += 1
-                    gamelib.debug_write(
-                        f"FORCE-DEFEND: turret at ({cx},{cy}) for breach at ({bx},{_by})"
-                    )
-
     def build_defences(self, game_state):
         self.refund_low_health_structures(game_state)
-        self.build_default_defences(game_state)
         self._force_defend_breaches(game_state)
-        result = place_turrets(
-            game_state,
-            turret_shorthand=TURRET,
-            candidate_pool=CURATED_TURRET_POSITIONS,
-            last_turn_enemy_spawns=self.last_turn_enemy_spawns,
-        )
-        gamelib.debug_write(
-            f"placer: placed={len(result['placed'])} "
-            f"upgraded={len(result['upgraded'])} "
-            f"stop={result['stopped_reason']} "
-            f"memory={len(self.last_turn_enemy_spawns)}"
-        )
-
+        self.build_default_defences(game_state)
 
 
     def enumerate_friendly_side_locations(self, game_state):
@@ -386,14 +327,37 @@ class AlgoStrategy(gamelib.AlgoCore):
     def build_default_defences(self, game_state):
         """
         Build and patch defenses based on priority levels, then process upgrades.
+        Prioritizes structures by Euclidean distance if an enemy scout path is detected.
         """
         stop_flag = False
 
-        for priority in ["start", "frontline","catchline", "supportstructure"]:
+        # 1. Identify all locations the enemy has spawned at >= 2 times and map their path
+        vulnerable_path_points = []
+        for loc_str, count in self.enemy_scout_spawns.items():
+            if count >= 2:
+                # Convert "x:y" back to [x, y]
+                x_str, y_str = loc_str.split(":")
+                spawn_location = [int(x_str), int(y_str)]
+                
+                # Get the route these scouts will take based on the current board state
+                path = game_state.find_path_to_edge(spawn_location)
+                if path:
+                    vulnerable_path_points.extend(path)
+
+        for priority in ["start", "sides", "frontline", "catchline", "supportstructure"]:
             if stop_flag:
                 break
             
             job_list = self.build_order.get(priority, [])
+
+            # 2. If we found a vulnerable route, sort this priority's job_list by closest distance
+            if vulnerable_path_points:
+                def min_distance_to_path(job):
+                    job_loc = job["location"]
+                    # Calculate Euclidean distance to the closest point on the enemy path
+                    return min(math.sqrt((job_loc[0] - p[0])**2 + (job_loc[1] - p[1])**2) for p in vulnerable_path_points)
+                
+                job_list = sorted(job_list, key=min_distance_to_path)
 
             for build_job in job_list:
                 unit = eval(build_job["unit"])
@@ -408,175 +372,80 @@ class AlgoStrategy(gamelib.AlgoCore):
                     game_state.attempt_upgrade(location)
 
 
+    def deploy_anti_scout_interceptor(self, game_state):
+        """
+        If an enemy has spawned scouts at the exact same location >= 4 times, 
+        find the path they are taking and drop an Interceptor directly on/near it.
+        """
+        my_mp = int(game_state.get_resource(MP, 0))
+        enemy_mp = int(game_state.get_resource(MP, 1))
+
+        # Only deploy if we have MP, and the enemy has enough MP (>=5) to do a dangerous scout rush
+        if my_mp >= 1 and enemy_mp >= 5:
+            for loc_str, count in self.enemy_scout_spawns.items():
+                if count >= 4:
+                    x_str, y_str = loc_str.split(":")
+                    spawn_location = [int(x_str), int(y_str)]
+                    
+                    path = game_state.find_path_to_edge(spawn_location)
+                    if not path:
+                        continue
+                        
+                    friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + \
+                                     game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
+                    
+                    available_edges = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
+                    
+                    if not available_edges:
+                        continue
+
+                    # 1. Look for an exact intersection between the enemy's path and our allowed spawn edges
+                    intersection = [loc for loc in path if loc in available_edges]
+                    
+                    if intersection:
+                        best_loc = intersection[-1] 
+                    else:
+                        # 2. If no direct intersection, find our available edge that is closest to their path
+                        def min_dist_to_path(edge_loc):
+                            return min(math.sqrt((edge_loc[0] - p[0])**2 + (edge_loc[1] - p[1])**2) for p in path)
+                        
+                        best_loc = min(available_edges, key=min_dist_to_path)
+                    
+                    # Spawn interceptor and subtract 1 MP cost for the rest of our turn
+                    if game_state.attempt_spawn(INTERCEPTOR, best_loc, 1):
+                        gamelib.debug_write(f"High-threat scout spam detected (>=4 times) from {spawn_location}. Deployed Interceptor at {best_loc}.")
+                        break  # One interceptor is usually enough to disrupt a wave, saves MP.
+
+
     def execute_scout_rush(self, game_state):
         """
         Bomb rush the gap in defense using Scouts.
-        If the path is too heavily defended, save up MP and use the alternative
-        Demolisher + Scout strategy.
         """
         mp = int(game_state.get_resource(MP))
-
-        # We need at least 5 MP for any rush to be effective
         if mp < 5:
             return
 
-        # Count this rush as a support-attack attempt. The _update_aggressive_attack_trigger
-        # will reset the counter next turn if a support got destroyed.
-        self.support_attack_attempts_since_kill += 1
-        if (self.support_attack_attempts_since_kill >= self.MAX_SUPPORT_ATTACK_ATTEMPTS
-                and not self.disable_support_targeting):
-            self.disable_support_targeting = True
-            gamelib.debug_write(
-                f"support-targeting disabled after {self.support_attack_attempts_since_kill} "
-                f"failed attempts — switching to min-damage routing"
-            )
+        best_scout_location, lowest_damage = self.find_best_scout_spawn(game_state)
+        if lowest_damage == float('inf'):
+            gamelib.debug_write("All scout paths are stuck/blocked! Saving MP.")
+            return
 
-        # Aggressive-attack override: enemy lost ≥60% of supports last turn → predict
-        # they'll spend SP rebuilding instead of defending. Commit all MP at the path
-        # of least defensive damage; skip funnel analysis.
+        # Aggressive-attack override: enemy lost ≥60% supports last turn → all-in.
+        # (We already have the safest path; just commit and consume the trigger.)
         if self.aggressive_attack:
-            best_scout_location, _ = self.find_best_scout_spawn(game_state)
-            if best_scout_location is None:
-                gamelib.debug_write("AGGRESSIVE-ATTACK skipped — no valid scout path this turn")
-                self.aggressive_attack = False
-                return
             game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
             gamelib.debug_write(
-                f"AGGRESSIVE-ATTACK fired: {mp} scouts at {best_scout_location}"
+                f"AGGRESSIVE-ATTACK fired: {mp} scouts at {best_scout_location} (route dmg={lowest_damage})"
             )
             self.aggressive_attack = False
             return
 
-        # Find the best path for a pure scout rush and observe anticipated damage
-        best_scout_location, lowest_damage = self.find_best_scout_spawn(game_state)
-        if best_scout_location is None:
-            gamelib.debug_write("scout rush skipped — no valid path to enemy edge this turn")
-            return
-        
-        # Calculate if our pure scout rush will get melted (Corrected to SCOUT health)
-        scout_health = gamelib.GameUnit(SCOUT, game_state.config).max_health
-        total_scout_health = mp * scout_health
+        game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
+        gamelib.debug_write(f"Scout rush deployed at {best_scout_location} with {mp} MP. Route damage: {lowest_damage}")
 
-        funnel_locations = [[11, 4], [12, 3], [13, 2], [14, 2], [15, 3], [16, 4]]
-        funnel_built = True
-        for loc in funnel_locations:
-            unit = game_state.contains_stationary_unit(loc)
-            # If there's no unit, or the unit there isn't a wall, try to build it
-            if not unit or unit.unit_type != WALL:
-                funnel_built = False # Even if we just spawned it, wait until next turn to be safe
-
-        
-        if lowest_damage > total_scout_health * 0.8 and funnel_built:
-            gamelib.debug_write(f"Picking Strategy: funnel")
-            # Path is heavily defended. Run the alternative strategy.
-            # Requires waiting until we have at least 8 MP for the Demolisher + Scouts
-            if mp >= 8:
-                left_strength = self.compute_enemy_left_edge_defense_strength(game_state)
-                right_strength = self.compute_enemy_right_edge_defense_strength(game_state)
-                
-                # Determine which side to attack
-                # (Spawning on the left edges targets top-right, Spawning on right targets top-left)
-                if right_strength < left_strength:
-                    # Attack right side by deploying on the left edge
-                    demo_loc = [11,2]
-                    scout_loc = [10, 3]
-                else:
-                    # Attack left side by deploying on the right edge
-                    demo_loc = [16, 2]
-                    scout_loc = [17, 3]
-                
-                # Ensure the specific deployment locations aren't blocked by our own walls
-                if game_state.contains_stationary_unit(demo_loc):
-                    game_state.attempt_remove(demo_loc)
-                if game_state.contains_stationary_unit(scout_loc):
-                    game_state.attempt_remove(scout_loc)
-
-                # Deduct demolisher cost to determine how many scouts we can spam 
-                # (Will act as vanguard/tank ahead of demolisher)
-                demo_cost = game_state.type_cost(DEMOLISHER)[0]
-                scouts_to_spawn = mp - demo_cost
-                
-                # Execute alternative strategy!
-                game_state.attempt_spawn(SCOUT, scout_loc, scouts_to_spawn)
-                game_state.attempt_spawn(DEMOLISHER, demo_loc, 1)
-                
-                gamelib.debug_write(f"Alternative Strategy deployed: Demolisher at {demo_loc}, {scouts_to_spawn} Scouts at {scout_loc}")
-            else:
-                gamelib.debug_write(f"Scouts would melt. Waiting for MP >= 8 for alternative strategy. Current MP: {mp}")
-        else:
-            # Path is safe enough to deploy normal pure scout rush
-            game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
-            gamelib.debug_write(f"Scout rush deployed at {best_scout_location} with {mp} MP")
-
-
-    def find_best_scout_spawn(self, game_state):
-        """
-        Pick the scout-spawn cell with the best score:
-            score = damage_taken − SUPPORT_TARGET_BONUS × supports_in_range
-        Lower score = better spawn. Returns (best_location, RAW damage_taken at that
-        spawn) so the funnel-trigger threshold sees real damage, not the adjusted score.
-        """
-        friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + \
-                         game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
-
-        deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
-        default_corners = [[13, 0], [14, 0]]
-        if not deploy_locations:
-            return random.choice(default_corners), float('inf')
-
-        turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
-        # If support targeting has been disabled (3 failed attacks), skip the
-        # support-bonus logic entirely and route purely by min-damage.
-        enemy_supports = [] if self.disable_support_targeting else self._enemy_support_locations(game_state)
-
-        # Enemy edge cells — used to validate a path actually reaches enemy side.
-        gm = game_state.game_map
-        enemy_edge_cells = set(map(tuple,
-            gm.get_edge_locations(gm.TOP_LEFT) + gm.get_edge_locations(gm.TOP_RIGHT)))
-
-        best_location = None
-        best_score = float('inf')
-        best_raw_damage = float('inf')
-
-        for loc in deploy_locations:
-            path = game_state.find_path_to_edge(loc)
-            if not path or tuple(path[-1]) not in enemy_edge_cells:
-                continue  # dead-end — scout would self-destruct on our side
-            damage_taken = 0
-            supports_hit = set()  # dedupe across path tiles
-
-            for path_location in path:
-                attackers = game_state.get_attackers(path_location, 0)
-                damage_taken += len(attackers) * turret_damage
-                for sx, sy, upgraded in enemy_supports:
-                    if (sx, sy) in supports_hit:
-                        continue
-                    if math.dist((path_location[0] + 0.5, path_location[1] + 0.5),
-                                 (sx + 0.5, sy + 0.5)) <= SCOUT_ATTACK_RANGE:
-                        supports_hit.add((sx, sy))
-
-            support_bonus = 0
-            for sx, sy in supports_hit:
-                upgraded = next(u for ux, uy, u in enemy_supports if (ux, uy) == (sx, sy))
-                support_bonus += SUPPORT_TARGET_BONUS * (SUPPORT_TARGET_UPGRADED_MULT if upgraded else 1)
-
-            score = damage_taken - support_bonus
-            if score < best_score:
-                best_score = score
-                best_location = loc
-                best_raw_damage = damage_taken
-
-        # If no valid path reaches an enemy edge, return None so caller can skip the attack.
-        if best_location is None:
-            return None, float('inf')
-        return best_location, best_raw_damage
 
     def _enemy_support_locations(self, game_state):
-        """List of (x, y, upgraded) for every enemy SUPPORT on the board.
-
-        Iterates the enemy half-diamond (y in [14, 27]) and filters by player
-        index + unit type.
-        """
+        """List of (x, y, upgraded) for every enemy SUPPORT on the board."""
         out = []
         for x in range(28):
             y_max = x + 14 if x < 14 else 41 - x
@@ -588,6 +457,71 @@ class AlgoStrategy(gamelib.AlgoCore):
                     continue
                 out.append((x, y, getattr(unit, "upgraded", False)))
         return out
+
+
+    def find_best_scout_spawn(self, game_state):
+        """
+        Calculates the safest route to the enemy edge.
+        Primary Objective: STRICTLY minimize damage taken.
+        Secondary Objective: If multiple paths take the exact same minimal damage, 
+                             pick the one that hits the most exposed supports.
+        """
+        friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + \
+                         game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
+
+        deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
+        default_corners = [[13, 0], [14, 0]]
+        
+        if not deploy_locations:
+            return random.choice(default_corners), float('inf')
+
+        turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
+        enemy_supports = self._enemy_support_locations(game_state)
+        SCOUT_ATTACK_RANGE = gamelib.GameUnit(SCOUT, game_state.config).attackRange
+
+        valid_paths = []
+
+        for loc in deploy_locations:
+            path = game_state.find_path_to_edge(loc)
+            
+            # ISSUE 1 FIX: If the path ends on our half of the board (y < 13), 
+            # the troop is stuck and will self-destruct. Discard this location.
+            if not path or path[-1][1] < 13:
+                continue
+                
+            damage_taken = 0
+            supports_hit = set()
+
+            for path_location in path:
+                attackers = game_state.get_attackers(path_location, 0)
+                damage_taken += len(attackers) * turret_damage
+                
+                for sx, sy, upgraded in enemy_supports:
+                    if (sx, sy) in supports_hit:
+                        continue
+                    # Check if support is within scout's attack range
+                    if math.sqrt((path_location[0] + 0.5 - (sx + 0.5))**2 + (path_location[1] + 0.5 - (sy + 0.5))**2) <= SCOUT_ATTACK_RANGE:
+                        supports_hit.add((sx, sy))
+
+            valid_paths.append({
+                'loc': loc,
+                'damage': damage_taken,
+                'supports': len(supports_hit)
+            })
+
+        # ISSUE 2 & 3 FIX: Separate pure rushing from support hunting.
+        if valid_paths:
+            # We sort the list of valid paths. 
+            # 1st Priority: 'damage' ascending (Always prefer lowest damage).
+            # 2nd Priority: '-supports' ascending (which means supports descending, to break ties).
+            valid_paths.sort(key=lambda p: (p['damage'], -p['supports']))
+            
+            best_path = valid_paths[0]
+            return best_path['loc'], best_path['damage']
+
+        # Fallback: Every single edge location is blocked/stuck.
+        valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
+        return random.choice(valid_corners or default_corners), float('inf')
 
 
     def spawn_interceptor(self, game_state, location, number):
