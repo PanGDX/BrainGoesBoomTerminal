@@ -1,0 +1,44 @@
+{
+  "start": [ 
+    { "type": "spawn", "unit": "TURRET", "location": [2, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [11, 11] },
+    { "type": "spawn", "unit": "TURRET", "location": [12, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [13, 13] },
+    { "type": "spawn", "unit": "SUPPORT", "location": [13, 12] },
+    { "type": "upgrade", "unit": "SUPPORT", "location": [13, 12] }
+  ],
+  "sides":[
+    { "type": "spawn", "unit": "WALL", "location": [0, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [1, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [2, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [3, 11] },
+    { "type": "spawn", "unit": "TURRET", "location": [4, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [5, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [5, 13] }
+  ],
+  "frontline" : [
+    { "type": "spawn", "unit": "TURRET", "location": [7, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [8, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [10, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [11, 13] }
+  ],
+  "catchline": [
+    { "type": "spawn", "unit": "TURRET", "location": [5, 11] },
+    { "type": "spawn", "unit": "TURRET", "location": [5, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [6, 10] },
+    { "type": "spawn", "unit": "TURRET", "location": [7, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [8, 10] },
+    { "type": "spawn", "unit": "TURRET", "location": [8, 11] },
+    { "type": "spawn", "unit": "TURRET", "location": [8, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [9, 10] },
+    { "type": "spawn", "unit": "TURRET", "location": [10, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [12, 10] },
+    { "type": "spawn", "unit": "TURRET", "location": [15, 10] }
+  ],
+  "supportstructure": [
+    { "type": "spawn", "unit": "SUPPORT", "location": [13, 11] },
+    { "type": "upgrade", "unit": "SUPPORT", "location": [13, 11] },
+    { "type": "spawn", "unit": "SUPPORT", "location": [12, 11] },
+    { "type": "upgrade", "unit": "SUPPORT", "location": [15, 11] }
+  ]
+}

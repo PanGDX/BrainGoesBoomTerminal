@@ -45,7 +45,7 @@
       "upgrade": {
         "generatesResource2": 2,
         "shieldRange": 12.0,
-        "shieldPerUnit": 4.0
+        "shieldPerUnit": 8.0
       }
     },
     {
