@@ -433,6 +433,19 @@ class AlgoStrategy(gamelib.AlgoCore):
         if mp < 5:
             return
 
+        # HARD-KILL override: enemy HP ≤ 12 → pick path with MAX breach damage
+        # (fewest scout deaths → most scouts reach enemy edge → most HP dmg).
+        if game_state.enemy_health <= 12:
+            hk_loc = self._find_max_breach_path(game_state, mp)
+            if hk_loc is not None:
+                game_state.attempt_spawn(SCOUT, hk_loc, 1000)
+                gamelib.debug_write(
+                    f"HARD-KILL: {mp} scouts at {hk_loc} (enemy hp={game_state.enemy_health:.0f})"
+                )
+                self.last_attack_side = "BL" if hk_loc[0] < 14 else "BR"
+                self._launched_attack_last_turn = True
+                return
+
         # Alternate-attack fallback: flip side and accept dead-end SD paths.
         if self.force_alternate_attack:
             alt_loc = self._find_alternate_spawn(game_state)
@@ -464,6 +477,38 @@ class AlgoStrategy(gamelib.AlgoCore):
 
         game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
         gamelib.debug_write(f"Scout rush: {mp} scouts at {best_scout_location} (raw dmg={lowest_damage})")
+
+    def _find_max_breach_path(self, game_state, mp):
+        """Pick the spawn whose path lets the most scouts survive to breach.
+        Scout dies when cumulative damage exceeds its HP (15). Survivors each
+        deal 1 HP breach damage. Maximize survivors = maximize breach damage.
+        """
+        gm = game_state.game_map
+        friendly_edges = gm.get_edge_locations(gm.BOTTOM_LEFT) + gm.get_edge_locations(gm.BOTTOM_RIGHT)
+        deploy_locations = [l for l in friendly_edges if not game_state.contains_stationary_unit(l)]
+        if not deploy_locations:
+            return None
+        enemy_edge_cells = set(map(tuple,
+            gm.get_edge_locations(gm.TOP_LEFT) + gm.get_edge_locations(gm.TOP_RIGHT)))
+        turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
+        scout_hp = gamelib.GameUnit(SCOUT, game_state.config).max_health
+
+        best_loc, best_survivors = None, -1
+        for loc in deploy_locations:
+            path = game_state.find_path_to_edge(loc)
+            if not path or tuple(path[-1]) not in enemy_edge_cells:
+                continue
+            damage_taken = 0
+            for cell in path:
+                attackers = game_state.get_attackers(cell, 0)
+                damage_taken += len(attackers) * turret_damage
+            # Each scout has scout_hp HP. Dead scouts = floor(damage / scout_hp).
+            dead = damage_taken // scout_hp
+            survivors = max(0, mp - dead)
+            if survivors > best_survivors:
+                best_survivors = survivors
+                best_loc = loc
+        return best_loc
 
     def _find_alternate_spawn(self, game_state):
         """Pick a spawn on the OPPOSITE side from last_attack_side, preferring
