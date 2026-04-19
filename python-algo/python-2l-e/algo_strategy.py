@@ -18,11 +18,7 @@ Advanced strategy tips:
   board states. Though, we recommended making a copy of the map to preserve 
   the actual current map state.
 """
-SUPPORT_TARGET_BONUS = 30
-SUPPORT_TARGET_UPGRADED_MULT = 2
-
-# Adaptive add-ons:
-# - Aggressive-attack: enemy lost ≥60% supports last turn → commit all MP at min-damage path.
+# Aggressive-attack: enemy lost ≥60% supports last turn → commit all MP at min-firepower path.
 AGGRESSIVE_ATTACK_LOSS_RATIO = 0.60
 AGGRESSIVE_ATTACK_MIN_PRIOR = 3
 
@@ -259,6 +255,27 @@ class AlgoStrategy(gamelib.AlgoCore):
     def build_defences(self, game_state):
         self.refund_low_health_structures(game_state)
         self.build_default_defences(game_state)
+        self._build_random_turrets_fallback(game_state)
+
+    def _build_random_turrets_fallback(self, game_state):
+        """After all build/upgrade tiers complete, spend any leftover SP on
+        random turrets in the upper-half friendly diamond."""
+        turret_cost = game_state.type_cost(TURRET)[0]
+        upper_half = []
+        for cell in self.enumerate_friendly_side_locations(game_state):
+            if 8 <= cell[1] <= 13:
+                upper_half.append(cell)
+        attempts = 0
+        max_attempts = 20
+        while game_state.get_resource(SP) >= turret_cost and attempts < max_attempts:
+            attempts += 1
+            empty = [c for c in upper_half if not game_state.contains_stationary_unit(c)]
+            if not empty:
+                return
+            cell = random.choice(empty)
+            sent = game_state.attempt_spawn(TURRET, cell)
+            if sent > 0:
+                gamelib.debug_write(f"RANDOM-TURRET: spawned at {cell}")
 
 
     def enumerate_friendly_side_locations(self, game_state):
@@ -305,7 +322,7 @@ class AlgoStrategy(gamelib.AlgoCore):
                 if path:
                     vulnerable_path_points.extend(path)
 
-        for priority in ["start", "sides", "frontline", "catchline", "supportstructure"]:
+        for priority in ["start", "sides", "frontline", "catchline", "supportstructure", "turret_upgrades"]:
             if stop_flag:
                 break
             
@@ -387,126 +404,73 @@ class AlgoStrategy(gamelib.AlgoCore):
             return
 
         best_scout_location, lowest_damage = self.find_best_scout_spawn(game_state)
-        if lowest_damage == float('inf'):
-            gamelib.debug_write("All scout paths are stuck/blocked! Saving MP.")
+        if best_scout_location is None:
+            gamelib.debug_write("All scout paths are dead-ends — saving MP.")
             return
 
-        # Aggressive-attack override: enemy lost ≥60% supports last turn → all-in.
-        # (We already have the safest path; just commit and consume the trigger.)
         if self.aggressive_attack:
             game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
             gamelib.debug_write(
-                f"AGGRESSIVE-ATTACK fired: {mp} scouts at {best_scout_location} (route dmg={lowest_damage})"
+                f"AGGRESSIVE-ATTACK fired: {mp} scouts at {best_scout_location}"
             )
             self.aggressive_attack = False
             return
 
         game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
-        gamelib.debug_write(f"Scout rush deployed at {best_scout_location} with {mp} MP. Route damage: {lowest_damage}")
-
-
-    def _enemy_support_locations(self, game_state):
-        """List of (x, y, upgraded) for every enemy SUPPORT on the board."""
-        out = []
-        for x in range(28):
-            y_max = x + 14 if x < 14 else 41 - x
-            for y in range(14, y_max + 1):
-                unit = game_state.contains_stationary_unit([x, y])
-                if not unit or unit.player_index != 1:
-                    continue
-                if unit.unit_type != SUPPORT:
-                    continue
-                out.append((x, y, getattr(unit, "upgraded", False)))
-        return out
+        gamelib.debug_write(f"Scout rush: {mp} scouts at {best_scout_location} (raw dmg={lowest_damage})")
 
 
     def find_best_scout_spawn(self, game_state):
         """
-        Pick the scout spawn. If any path can destroy at least one enemy support
-        this turn (simulated), prefer it (damage-min, supports-desc tie-break).
-        Otherwise, pick the path with minimum HP-weighted enemy firepower —
-        turrets at low HP are discounted since they die before finishing firing.
+        Pick the spawn with MINIMUM HP-weighted enemy firepower along its path.
+
+        For each candidate: sum turret_damage × (attacker.health / max_health)
+        across all path cells. Turrets at low HP count less since they'll die
+        mid-rush. Low-HP-weighted-total = safest path for our scouts.
+
+        Dead-end guard: paths whose last cell is not on an enemy edge
+        (TOP_LEFT ∪ TOP_RIGHT) are rejected — scouts would self-destruct on
+        our side. If NO valid path exists, returns (None, inf) so caller skips.
         """
-        friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + \
-                         game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
+        gm = game_state.game_map
+        friendly_edges = gm.get_edge_locations(gm.BOTTOM_LEFT) + gm.get_edge_locations(gm.BOTTOM_RIGHT)
         deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
-        default_corners = [[13, 0], [14, 0]]
         if not deploy_locations:
-            return random.choice(default_corners), float('inf')
+            return None, float('inf')
 
+        enemy_edge_cells = set(map(tuple,
+            gm.get_edge_locations(gm.TOP_LEFT) + gm.get_edge_locations(gm.TOP_RIGHT)))
         turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
-        scout_hp = gamelib.GameUnit(SCOUT, game_state.config).max_health
-        scout_tower_dmg = gamelib.GameUnit(SCOUT, game_state.config).damage_f
-        support_hp = gamelib.GameUnit(SUPPORT, game_state.config).max_health
-        SCOUT_ATTACK_RANGE = gamelib.GameUnit(SCOUT, game_state.config).attackRange
 
-        mp = int(game_state.get_resource(MP))
-        total_scout_hp = mp * scout_hp
-        enemy_supports = self._enemy_support_locations(game_state)
-
-        valid_paths = []
+        best_loc = None
+        best_firepower = float('inf')
+        best_raw_damage = float('inf')
 
         for loc in deploy_locations:
             path = game_state.find_path_to_edge(loc)
-            if not path or path[-1][1] < 13:
-                continue  # dead-end
+            if not path or tuple(path[-1]) not in enemy_edge_cells:
+                continue  # dead-end — walker can't reach enemy edge, will self-destruct
 
-            damage_taken = 0
-            damage_taken_weighted = 0.0  # weighted by attacker HP fraction
-            supports_hit = set()
-            # For each support, accumulate scout damage dealt across path cells in range.
-            support_damage = {}
-
-            for path_location in path:
-                attackers = game_state.get_attackers(path_location, 0)
-                damage_taken += len(attackers) * turret_damage
+            firepower = 0.0
+            raw_damage = 0
+            for cell in path:
+                attackers = game_state.get_attackers(cell, 0)  # enemy units that can attack OUR walker at `cell`
                 for a in attackers:
                     hp_frac = (a.health / a.max_health) if a.max_health else 0
-                    damage_taken_weighted += turret_damage * hp_frac
+                    firepower += turret_damage * hp_frac
+                    raw_damage += turret_damage
 
-                for sx, sy, _upgraded in enemy_supports:
-                    if math.sqrt(
-                        (path_location[0] + 0.5 - (sx + 0.5)) ** 2
-                        + (path_location[1] + 0.5 - (sy + 0.5)) ** 2
-                    ) <= SCOUT_ATTACK_RANGE:
-                        supports_hit.add((sx, sy))
-                        # Surviving-scout estimate: fraction of scouts still alive at this cell.
-                        # Coarse: linear decay proportional to cumulative damage_taken.
-                        survive_frac = max(0.0, 1.0 - damage_taken / max(total_scout_hp, 1))
-                        support_damage[(sx, sy)] = support_damage.get((sx, sy), 0) + \
-                                                    mp * survive_frac * scout_tower_dmg
+            if firepower < best_firepower:
+                best_firepower = firepower
+                best_raw_damage = raw_damage
+                best_loc = loc
 
-            can_destroy_support = any(dmg >= support_hp for dmg in support_damage.values())
-
-            valid_paths.append({
-                'loc': loc,
-                'damage': damage_taken,
-                'damage_weighted': damage_taken_weighted,
-                'supports': len(supports_hit),
-                'can_destroy': can_destroy_support,
-            })
-
-        if not valid_paths:
-            valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
-            return random.choice(valid_corners or default_corners), float('inf')
-
-        kill_paths = [p for p in valid_paths if p['can_destroy']]
-        if kill_paths:
-            # Can destroy ≥1 support this turn: damage-min, supports-desc tie-break.
-            kill_paths.sort(key=lambda p: (p['damage'], -p['supports']))
-            best = kill_paths[0]
-            gamelib.debug_write(
-                f"SCOUT-KILL path: loc={best['loc']} dmg={best['damage']} supports={best['supports']}"
-            )
-        else:
-            # No support-kill possible: choose minimum HP-weighted firepower.
-            valid_paths.sort(key=lambda p: p['damage_weighted'])
-            best = valid_paths[0]
-            gamelib.debug_write(
-                f"SCOUT-SAFE path: loc={best['loc']} dmg={best['damage']} "
-                f"hp-weighted={best['damage_weighted']:.1f}"
-            )
-        return best['loc'], best['damage']
+        if best_loc is None:
+            return None, float('inf')
+        gamelib.debug_write(
+            f"scout path: loc={best_loc} fp={best_firepower:.1f} raw_dmg={best_raw_damage}"
+        )
+        return best_loc, best_raw_damage
 
 
     def spawn_interceptor(self, game_state, location, number):
