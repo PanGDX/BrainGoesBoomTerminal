@@ -22,6 +22,22 @@ Advanced strategy tips:
 AGGRESSIVE_ATTACK_LOSS_RATIO = 0.60
 AGGRESSIVE_ATTACK_MIN_PRIOR = 3
 
+# Scout spawn priority: 4 edge-corner clusters (3 cells each, cells closest
+# to the true corner first). First cell whose path reaches the enemy edge AND
+# whose single-scout final HP (incl. upgraded-support shield buffs) ≥
+# CORNER_MIN_FINAL_HP wins. Falls back to the HP-weighted-firepower scan.
+SCOUT_CORNER_PRIORITY = [
+    # BL edge — top-left corner and 2 inward cells
+    (0, 13), (1, 12), (2, 11),
+    # BL edge — bottom corner and 2 inward cells
+    (13, 0), (12, 1), (11, 2),
+    # BR edge — bottom corner and 2 inward cells
+    (14, 0), (15, 1), (16, 2),
+    # BR edge — top-right corner and 2 inward cells
+    (27, 13), (26, 12), (25, 11),
+]
+CORNER_MIN_FINAL_HP = 4
+
 
 class AlgoStrategy(gamelib.AlgoCore):
     def __init__(self):
@@ -352,7 +368,7 @@ class AlgoStrategy(gamelib.AlgoCore):
                 if path:
                     vulnerable_path_points.extend(path)
 
-        for priority in ["start", "extra_supports", "sides", "frontline", "catchline", "supportstructure", "turret_upgrades"]:
+        for priority in ["start", "extra_supports", "sides", "frontline", "catchline", "turret_upgrades"]:
             if stop_flag:
                 break
             
@@ -536,32 +552,97 @@ class AlgoStrategy(gamelib.AlgoCore):
         return best_loc
 
 
-    def find_best_scout_spawn(self, game_state):
-        """Pick the spawn with MINIMUM HP-weighted enemy firepower along its
-        path (turret_damage × attacker.hp/max_hp per path cell).
+    def _our_shielding_supports(self, game_state):
+        """List of (x, y, shieldRange, shieldPerUnit) for our supports that
+        actually buff walkers (shieldPerUnit > 0, i.e. upgraded)."""
+        out = []
+        for x in range(28):
+            y_lo = 13 - x if x < 14 else x - 14
+            for y in range(y_lo, 14):
+                unit = game_state.contains_stationary_unit([x, y])
+                if not unit or unit.unit_type != SUPPORT or unit.player_index != 0:
+                    continue
+                sper = getattr(unit, "shieldPerUnit", 0) or 0
+                if sper <= 0:
+                    continue
+                out.append((x, y, getattr(unit, "shieldRange", 0) or 0, sper))
+        return out
 
-        Dead-end guard: path[-1] must be on an enemy edge. Otherwise returns
-        (None, inf) so caller skips the attack.
+    def _simulate_scout_final_hp(self, game_state, spawn, scout_hp, turret_damage, supports):
+        """Return (path, final_hp) for a single scout walking from `spawn`, or
+        (None, None) if dead-end (path end not on enemy edge).
+
+        final_hp = scout_hp + Σ shield_buff − Σ damage_taken along path. Each
+        support buffs the walker ONCE when first entered within its range.
         """
         gm = game_state.game_map
+        path = game_state.find_path_to_edge(spawn)
+        if not path:
+            return None, None
+        enemy_edge = set(map(tuple,
+            gm.get_edge_locations(gm.TOP_LEFT) + gm.get_edge_locations(gm.TOP_RIGHT)))
+        if tuple(path[-1]) not in enemy_edge:
+            return None, None  # dead-end
+
+        applied = set()
+        shield_bonus = 0
+        damage_taken = 0
+        for cell in path:
+            for sx, sy, srange, sper in supports:
+                if (sx, sy) in applied:
+                    continue
+                if math.hypot(cell[0] - sx, cell[1] - sy) <= srange:
+                    applied.add((sx, sy))
+                    shield_bonus += sper
+            attackers = game_state.get_attackers(cell, 0)
+            damage_taken += len(attackers) * turret_damage
+        return path, scout_hp + shield_bonus - damage_taken
+
+    def find_best_scout_spawn(self, game_state):
+        """Priority 1: try the 4 edge-corners (SCOUT_CORNER_PRIORITY); first
+        one whose path reaches the enemy edge AND whose single-scout final HP
+        (incl. upgraded-support shield buffs) ≥ CORNER_MIN_FINAL_HP wins.
+
+        Priority 2: min HP-weighted enemy firepower across all other edge cells.
+        """
+        gm = game_state.game_map
+        turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
+        scout_hp = gamelib.GameUnit(SCOUT, game_state.config).max_health
+        supports = self._our_shielding_supports(game_state)
+
+        # Priority 1: corners
+        for corner in SCOUT_CORNER_PRIORITY:
+            if game_state.contains_stationary_unit(list(corner)):
+                continue
+            path, final_hp = self._simulate_scout_final_hp(
+                game_state, list(corner), scout_hp, turret_damage, supports
+            )
+            if path is None:
+                continue  # dead-end or no path
+            if final_hp >= CORNER_MIN_FINAL_HP:
+                raw_damage = sum(
+                    len(game_state.get_attackers(c, 0)) * turret_damage for c in path
+                )
+                gamelib.debug_write(
+                    f"CORNER-PRIORITY: {list(corner)} final_hp={final_hp} raw_dmg={raw_damage}"
+                )
+                return list(corner), raw_damage
+
+        # Priority 2: min HP-weighted firepower across all unblocked edges
         friendly_edges = gm.get_edge_locations(gm.BOTTOM_LEFT) + gm.get_edge_locations(gm.BOTTOM_RIGHT)
         deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
         if not deploy_locations:
             return None, float('inf')
-
         enemy_edge_cells = set(map(tuple,
             gm.get_edge_locations(gm.TOP_LEFT) + gm.get_edge_locations(gm.TOP_RIGHT)))
-        turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
 
         best_loc = None
         best_firepower = float('inf')
         best_raw_damage = float('inf')
-
         for loc in deploy_locations:
             path = game_state.find_path_to_edge(loc)
             if not path or tuple(path[-1]) not in enemy_edge_cells:
-                continue  # dead-end
-
+                continue
             firepower = 0.0
             raw_damage = 0
             for cell in path:
@@ -570,7 +651,6 @@ class AlgoStrategy(gamelib.AlgoCore):
                 for a in attackers:
                     hp_frac = (a.health / a.max_health) if a.max_health else 0
                     firepower += turret_damage * hp_frac
-
             if firepower < best_firepower:
                 best_firepower = firepower
                 best_raw_damage = raw_damage
