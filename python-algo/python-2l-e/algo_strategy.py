@@ -21,8 +21,7 @@ Advanced strategy tips:
 SUPPORT_TARGET_BONUS = 30
 SUPPORT_TARGET_UPGRADED_MULT = 2
 
-# Adaptive add-ons from python-2l-d:
-# - 1-turn breach-cell memory triggers force-defend turrets near attacked corners.
+# Adaptive add-ons:
 # - Aggressive-attack: enemy lost ≥60% supports last turn → commit all MP at min-damage path.
 AGGRESSIVE_ATTACK_LOSS_RATIO = 0.60
 AGGRESSIVE_ATTACK_MIN_PRIOR = 3
@@ -39,8 +38,6 @@ class AlgoStrategy(gamelib.AlgoCore):
         self.enemy_scout_spawns = {}
 
         # Adaptive layer state
-        self._pending_breach_cells = set()
-        self.last_turn_breach_cells = set()
         self.aggressive_attack = False
         self.last_enemy_support_count = 0
 
@@ -104,7 +101,7 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def on_action_frame(self, turn_string):
         """
-        Intercepts action frames to map enemy scout spawn locations and breach cells.
+        Intercepts action frames to map enemy scout spawn locations.
         """
         state = json.loads(turn_string)
         events = state.get("events", {})
@@ -118,22 +115,10 @@ class AlgoStrategy(gamelib.AlgoCore):
                     key = f"{loc[0]}:{loc[1]}"
                     self.enemy_scout_spawns[key] = self.enemy_scout_spawns.get(key, 0) + 1
 
-        # Track breach events on EVERY action frame (they fire when walkers reach edges).
-        # Format: [location, damage, unit_type, unit_id, player]; player==2 = enemy breaching us.
-        for breach in events.get("breach", []):
-            if len(breach) < 5:
-                continue
-            location, player = breach[0], breach[4]
-            if player == 2:
-                self._pending_breach_cells.add(tuple(location))
 
 
     def on_turn(self, turn_state):
         game_state = gamelib.GameState(self.config, turn_state)
-
-        # Snapshot adaptive memory at start of turn, clear pending buffer.
-        self.last_turn_breach_cells = set(self._pending_breach_cells)
-        self._pending_breach_cells.clear()
 
         try:
             self.parse_game_state(game_state)
@@ -175,29 +160,6 @@ class AlgoStrategy(gamelib.AlgoCore):
                 )
         self.last_enemy_support_count = current
 
-    def _force_defend_breaches(self, game_state):
-        """Force-spawn up to 2 turrets near each breach cell from last turn."""
-        if not self.last_turn_breach_cells:
-            return
-        turret_cost = game_state.type_cost(TURRET)[0]
-        for bx, _by in self.last_turn_breach_cells:
-            placed = 0
-            candidates = [(bx, 13), (bx, 12), (bx - 1, 13), (bx + 1, 13), (bx - 1, 12), (bx + 1, 12)]
-            for cx, cy in candidates:
-                if placed >= 2:
-                    break
-                if game_state.get_resource(SP) < turret_cost:
-                    return
-                if not (0 <= cx <= 27 and 8 <= cy <= 13):
-                    continue
-                if game_state.contains_stationary_unit([cx, cy]):
-                    continue
-                sent = game_state.attempt_spawn(TURRET, [cx, cy])
-                if sent > 0:
-                    placed += 1
-                    gamelib.debug_write(
-                        f"FORCE-DEFEND: turret at ({cx},{cy}) for breach at ({bx},{_by})"
-                    )
 
 
     def starter_strategy(self, game_state):
@@ -296,7 +258,6 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def build_defences(self, game_state):
         self.refund_low_health_structures(game_state)
-        self._force_defend_breaches(game_state)
         self.build_default_defences(game_state)
 
 
