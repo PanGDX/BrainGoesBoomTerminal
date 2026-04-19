@@ -10,13 +10,13 @@
   "sides":[
     { "type": "spawn", "unit": "WALL", "location": [0, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [1, 13] },
-    { "type": "spawn", "unit": "TURRET", "location": [2, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [3, 11] },
     { "type": "spawn", "unit": "TURRET", "location": [4, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [5, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [5, 13] }
   ],
   "frontline" : [
+    { "type": "spawn", "unit": "TURRET", "location": [2, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [7, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [8, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [10, 13] },

@@ -1,0 +1,28 @@
+{
+  "highest": [
+    { "type": "upgrade", "unit": "TURRET", "location": [2, 13] },
+    { "type": "upgrade", "unit": "TURRET", "location": [6, 13] },
+    { "type": "upgrade", "unit": "TURRET", "location": [12, 12] },
+    { "type": "upgrade", "unit": "TURRET", "location": [13, 13] },
+    { "type": "upgrade", "unit": "TURRET", "location": [14, 13] },
+    { "type": "upgrade", "unit": "TURRET", "location": [23, 12] },
+    { "type": "upgrade", "unit": "SUPPORT", "location": [13, 1] },
+    { "type": "upgrade", "unit": "SUPPORT", "location": [14, 1] }
+  ],
+  "high" : [
+  ],
+  "medium": [
+    { "type": "upgrade", "unit": "TURRET", "location": [8, 7] },
+    { "type": "upgrade", "unit": "TURRET", "location": [19, 7] },
+    { "type": "upgrade", "unit": "TURRET", "location": [3, 13] },
+    { "type": "upgrade", "unit": "TURRET", "location": [24, 13] },
+    { "type": "upgrade", "unit": "TURRET", "location": [4, 13] },
+    { "type": "upgrade", "unit": "TURRET", "location": [23, 13] },
+    { "type": "upgrade", "unit": "TURRET", "location": [11, 6] },
+    { "type": "upgrade", "unit": "TURRET", "location": [16, 6] }
+  ],
+  "low": [
+  ],
+  "lowest": [
+  ]
+}

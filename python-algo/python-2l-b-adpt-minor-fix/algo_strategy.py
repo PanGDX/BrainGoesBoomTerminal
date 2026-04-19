@@ -26,16 +26,9 @@ class AlgoStrategy(gamelib.AlgoCore):
         seed = random.randrange(maxsize)
         random.seed(seed)
         gamelib.debug_write('Random seed: {}'.format(seed))
-        self.pummel = False
+        
         # Dictionary to track precise enemy scout spawn locations
         self.enemy_scout_spawns = {}
-        
-        # Tracking variables for consecutive attack detection
-        self.consecutive_right_landings = 0 # Attacks landing on the right side (x >= 14) -> "left attacks"
-        self.consecutive_left_landings = 0  # Attacks landing on the left side (x < 14) -> "right attacks"
-        self.enemy_attack_spawns_last_turn = []
-        self.deploying_counter_interceptor = False
-
 
     def on_game_start(self, config):
         """ 
@@ -60,49 +53,11 @@ class AlgoStrategy(gamelib.AlgoCore):
         MP = 1
         SP = 0
 
-        REFUND_THRESHOLD_WALL = 0.5
-        REFUND_THRESHOLD_TURRET = 0.2
+        REFUND_THRESHOLD_WALL = 0
+        REFUND_THRESHOLD_TURRET = 0
         with open(os.path.join(os.path.dirname(__file__), 'build-order.json'), 'r') as f:
-            raw_build_order = json.loads(f.read())
-            
-        self.build_order = {}
-        for priority, job_list in raw_build_order.items():
-            mirrored_list = []
-            for job in job_list:
-                # Add the left-side job
-                mirrored_list.append(job)
-                
-                # Copy properties and formulate the symmetrical right-side job
-                mirrored_job = dict(job)
-                mirrored_job["location"] = [27 - job["location"][0], job["location"][1]]
-                mirrored_list.append(mirrored_job)
-                
-            self.build_order[priority] = mirrored_list
+            self.build_order = json.loads(f.read())
 
-        ENEMY_EDGE_DEFENSE_LOCATIONS_LEFT = [[0, 14], [1, 14], [2, 14], [3, 14], [4, 14], [1, 15], [2, 15], [3, 15], [2, 16], [3, 16]]
-        ENEMY_EDGE_DEFENSE_LOCATIONS_RIGHT = [[27, 14], [26, 14], [25, 14], [24, 14], [23, 14], [26, 15], [25, 15], [24, 15], [25, 16], [24, 16]]
-
-        ATTACK_DEMOLISHER_LOCATION_LEFT = [6, 7]
-        ATTACK_DEMOLISHER_LOCATION_RIGHT = [21, 7]
-        DEFENSE_INTERCEPTOR_LOCATION_LEFT = [7, 6]
-        DEFENSE_INTERCEPTOR_LOCATION_RIGHT = [20, 6]
-        ATTACK_LEFT_SCOUT_FIRST_GROUP_LOCATION = [14, 0]
-        ATTACK_LEFT_SCOUT_SECOND_GROUP_LOCATION = [21, 7]
-        ATTACK_RIGHT_SCOUT_FIRST_GROUP_LOCATION = [13, 0]
-        ATTACK_RIGHT_SCOUT_SECOND_GROUP_LOCATION = [8, 5]
-        ATTACK_LEFT_REMOVE_WALL_LOCATION = [6, 7]
-        ATTACK_RIGHT_REMOVE_WALL_LOCATION = [21, 8]
-
-        self.enemy_left_edge_strength = 100
-        self.enemy_right_edge_strength = 100
-        self.enemy_left_edge_blocked = True
-        self.enemy_right_edge_blocked = True
-        self.enemy_left_edge_misdirecting = False
-        self.enemy_right_edge_misdirecting = False
-        self.my_MP = 0
-        self.enemy_MP = 0
-        self.turn_strategy = "defend" 
-        self.attack_turn = 0 
 
         self.min_sp_to_save = 0 
 
@@ -115,13 +70,10 @@ class AlgoStrategy(gamelib.AlgoCore):
         
         # turnInfo[0] == 1 implies Action Phase, turnInfo[2] == 0 implies the very first frame where units spawn
         if state["turnInfo"][0] == 1 and state["turnInfo"][2] == 0:
-            # Clear last turn's attack tracking at the very start of the action phase
-            self.enemy_attack_spawns_last_turn = []
-            
             spawns = state.get("events", {}).get("spawn", [])
             for spawn in spawns:
                 loc = spawn[0]      # e.g., [20, 27]
-                unit_type = spawn[1] # 3 = Scout, 4 = Demolisher, 5 = Interceptor
+                unit_type = spawn[1] # 3 = Scout
                 
                 # Check if it is a Scout and spawned on the enemy half (y >= 14)
                 if unit_type == 3 and loc[1] >= 14:
@@ -130,15 +82,8 @@ class AlgoStrategy(gamelib.AlgoCore):
                     self.enemy_scout_spawns[key] = self.enemy_scout_spawns.get(key, 0) + 1
                     gamelib.debug_write(f"Enemy scout detected at {key}. Total times: {self.enemy_scout_spawns[key]}")
 
-                # Track ALL mobile attack units spawned on enemy side for side analysis
-                if unit_type in [3, 4, 5] and loc[1] >= 14:
-                    self.enemy_attack_spawns_last_turn.append(loc)
-
 
     def on_turn(self, turn_state):
-        # Reset tracker so we don't accidentally skip scout rushes indefinitely 
-        self.deploying_counter_interceptor = False
-        
         game_state = gamelib.GameState(self.config, turn_state)
 
         try:
@@ -146,66 +91,19 @@ class AlgoStrategy(gamelib.AlgoCore):
         except Exception as e:
             gamelib.debug_write(f"Exception caught in starter_strategy: {e}")
         
+
         game_state.submit_turn()
 
 
     def starter_strategy(self, game_state):
         self.build_defences(game_state)
-        # self.deploy_consecutive_attack_counter(game_state) # --- NEW: Deploys preemptive interceptor
         self.execute_scout_rush(game_state)
 
 
-    def deploy_consecutive_attack_counter(self, game_state):
-        """
-        Detects which side consecutive enemy attacks are landing on by checking the path at y=13.
-        Deploys Interceptors accordingly to counter.
-        """
-        attacked_right_side = False
-        attacked_left_side = False
-        
-        # Analyze path of all enemy attacks spawned last turn
-        for loc in self.enemy_attack_spawns_last_turn:
-            path = game_state.find_path_to_edge(loc)
-            if not path:
-                continue
-                
-            for point in path:
-                # Detect which attack is which at the boundary line of y=13
-                if point[1] == 13:
-                    if point[0] >= 14:
-                        attacked_left_side = True # Attacks from left landing on right side
-                    else:
-                        attacked_right_side= True  # Attacks from right landing on left side
-                    break # Stop path search once boundary line is crossed
-                    
-        # Update consecutive counters. If an attack stopped, the counter completely resets.
-        if attacked_right_side:
-            self.consecutive_right_landings += 1
-        else:
-            self.consecutive_right_landings = 0
-            
-        if attacked_left_side:
-            self.consecutive_left_landings += 1
-        else:
-            self.consecutive_left_landings = 0
-
-        # Interceptors countering left attacks (landing right) are spawned at 22, 8
-        if self.consecutive_right_landings >= 2:
-            if game_state.get_resource(MP) >= 1:
-                game_state.attempt_spawn(INTERCEPTOR, [22, 8])
-                self.deploying_counter_interceptor = True
-                gamelib.debug_write("Consecutive left attacks detected. Counter interceptor placed at [22, 8].")
-        
-        # Interceptors countering right attacks (landing left) are spawned at 5, 8
-        if self.consecutive_left_landings >= 2:
-            if game_state.get_resource(MP) >= 1:
-                game_state.attempt_spawn(INTERCEPTOR, [5, 8])
-                self.deploying_counter_interceptor = True
-                gamelib.debug_write("Consecutive right attacks detected. Counter interceptor placed at [5, 8].")
 
 
     def build_defences(self, game_state):
-        self.refund_low_health_structures(game_state)
+        # self.refund_low_health_structures(game_state)
         self.build_default_defences(game_state)
 
 
@@ -283,58 +181,34 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def execute_scout_rush(self, game_state):
         """
-        Bomb rush the gap in defense using Scouts.
+        Bomb rush the gap in defense using Scouts, or pummel if blocked.
         """
-        
-        # Don't put scouts down if we deployed a defensive interceptor 
-        if self.deploying_counter_interceptor:
-            gamelib.debug_write("Counter interceptor active, skipping scout rush.")
-            return
-            
         mp = int(game_state.get_resource(MP))
-        
-        # We need at least 5 MP for any rush to be effective
-        if mp < 5:
-            return
 
         # Find the best path for a pure scout rush and observe anticipated damage
         best_scout_location, lowest_damage = self.find_best_scout_spawn(game_state)
         
         # If lowest_damage is infinity, it means EVERY spawn location is walled in / stuck.
-        # We abort the spawn to prevent wasting MP on troops that will instantly self-destruct.
         if lowest_damage == float('inf'):
-            self.pummel = True
-        else:
-            self.pummel = False # Reset pummel if a path opens up!
+            # Pummelling strategy: save up to 10 MP, then break defenses
+            if mp < 10:
+                gamelib.debug_write(f"All scout paths blocked! Saving MP for pummelling. Current MP: {mp}/10")
+                return
+            
+            pummel_loc = [13, 0]
+            if game_state.contains_stationary_unit(pummel_loc):
+                pummel_loc = [14, 0]
+                
+            game_state.attempt_spawn(SCOUT, pummel_loc, 1000)
+            gamelib.debug_write(f"Pummelling activated at {pummel_loc} with {mp} MP.")
+            return
 
-        if self.pummel:
-            # We are in pummel mode. Wait until we have at least 10 MP.
-            if mp >= 10:
-                # Ensure we don't try to spawn on top of our own defense
-                pummel_loc = [13, 0] if not game_state.contains_stationary_unit([13, 0]) else [14, 0]
-                game_state.attempt_spawn(SCOUT, pummel_loc, 1000)
-                gamelib.debug_write(f"PUMMEL ATTACK deployed at {pummel_loc} with {mp} MP!")
-            else:
-                gamelib.debug_write(f"All paths blocked. Saving for Pummel attack. Current MP: {mp}/10")
+        # Normal rush requires at least 5 MP
+        if mp < 5:
             return
 
         game_state.attempt_spawn(SCOUT, best_scout_location, 1000)
         gamelib.debug_write(f"Scout rush deployed at {best_scout_location} with {mp} MP. Route damage: {lowest_damage}")
-
-
-    def _enemy_support_locations(self, game_state):
-        """List of (x, y, upgraded) for every enemy SUPPORT on the board."""
-        out = []
-        for x in range(28):
-            y_max = x + 14 if x < 14 else 41 - x
-            for y in range(14, y_max + 1):
-                unit = game_state.contains_stationary_unit([x, y])
-                if not unit or unit.player_index != 1:
-                    continue
-                if unit.unit_type != SUPPORT:
-                    continue
-                out.append((x, y, getattr(unit, "upgraded", False)))
-        return out
 
 
     def find_best_scout_spawn(self, game_state):
@@ -348,23 +222,25 @@ class AlgoStrategy(gamelib.AlgoCore):
                          game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
 
         deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
-        default_corners = [[13, 0], [14, 0]]
         
         if not deploy_locations:
-            return random.choice(default_corners), float('inf')
+            return None, float('inf')
 
         turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
         enemy_supports = self._enemy_support_locations(game_state)
         SCOUT_ATTACK_RANGE = gamelib.GameUnit(SCOUT, game_state.config).attackRange
+
+        # Valid enemy edges to confirm the path isn't blocked
+        target_edges = game_state.game_map.get_edge_locations(game_state.game_map.TOP_LEFT) + \
+                       game_state.game_map.get_edge_locations(game_state.game_map.TOP_RIGHT)
 
         valid_paths = []
 
         for loc in deploy_locations:
             path = game_state.find_path_to_edge(loc)
             
-            # ISSUE 1 FIX: If the path ends on our half of the board (y < 13), 
-            # the troop is stuck and will self-destruct. Discard this location.
-            if not path or path[-1][1] < 13:
+            # If the path doesn't end on an enemy edge, it is a self-destruct (blocked) path.
+            if not path or path[-1] not in target_edges:
                 continue
                 
             damage_taken = 0
@@ -387,7 +263,6 @@ class AlgoStrategy(gamelib.AlgoCore):
                 'supports': len(supports_hit)
             })
 
-        # ISSUE 2 & 3 FIX: Separate pure rushing from support hunting.
         if valid_paths:
             # We sort the list of valid paths. 
             # 1st Priority: 'damage' ascending (Always prefer lowest damage).
@@ -397,9 +272,23 @@ class AlgoStrategy(gamelib.AlgoCore):
             best_path = valid_paths[0]
             return best_path['loc'], best_path['damage']
 
-        # Fallback: Every single edge location is blocked/stuck.
-        valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
-        return random.choice(valid_corners or default_corners), float('inf')
+        # Fallback: All paths are blocked. Return infinity to trigger pummelling.
+        return None, float('inf')
+
+    def _enemy_support_locations(self, game_state):
+        """List of (x, y, upgraded) for every enemy SUPPORT on the board."""
+        out = []
+        for x in range(28):
+            y_max = x + 14 if x < 14 else 41 - x
+            for y in range(14, y_max + 1):
+                unit = game_state.contains_stationary_unit([x, y])
+                if not unit or unit.player_index != 1:
+                    continue
+                if unit.unit_type != SUPPORT:
+                    continue
+                out.append((x, y, getattr(unit, "upgraded", False)))
+        return out
+
 
 
 if __name__ == "__main__":

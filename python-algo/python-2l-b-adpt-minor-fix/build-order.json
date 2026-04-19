@@ -23,7 +23,9 @@
     { "type": "spawn", "unit": "TURRET", "location": [26, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [23, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [22, 13] },
-    { "type": "spawn", "unit": "TURRET", "location": [22, 12] }
+    { "type": "spawn", "unit": "TURRET", "location": [22, 12] },
+    { "type": "spawn", "unit": "TURRET", "location": [3, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [24, 13] }
   ],
   "frontline" : [
     { "type": "spawn", "unit": "TURRET", "location": [7, 13] },
