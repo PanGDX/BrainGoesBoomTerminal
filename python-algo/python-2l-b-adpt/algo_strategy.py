@@ -269,7 +269,7 @@ class AlgoStrategy(gamelib.AlgoCore):
                 if path:
                     vulnerable_path_points.extend(path)
 
-        for priority in ["start", "sides", "frontline", "catchline", "supportstructure"]:
+        for priority in ["start", "sides", "frontline", "catchline", "supportstructure", "turret_upgrades"]:
             if stop_flag:
                 break
             
