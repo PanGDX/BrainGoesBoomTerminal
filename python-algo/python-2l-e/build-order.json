@@ -13,6 +13,12 @@
     { "type": "upgrade", "unit": "SUPPORT", "location": [13, 12] },
     { "type": "upgrade", "unit": "SUPPORT", "location": [14, 12] }
   ],
+  "extra_supports": [
+    { "type": "spawn", "unit": "SUPPORT", "location": [13, 11] },
+    { "type": "upgrade", "unit": "SUPPORT", "location": [13, 11] },
+    { "type": "spawn", "unit": "SUPPORT", "location": [14, 11] },
+    { "type": "upgrade", "unit": "SUPPORT", "location": [14, 11] }
+  ],
   "sides":[
     { "type": "spawn", "unit": "WALL", "location": [0, 13] },
     { "type": "spawn", "unit": "WALL", "location": [27, 13] },
@@ -61,10 +67,6 @@
     { "type": "spawn", "unit": "TURRET", "location": [23, 12] }
   ],
   "supportstructure": [
-    { "type": "spawn", "unit": "SUPPORT", "location": [13, 11] },
-    { "type": "upgrade", "unit": "SUPPORT", "location": [13, 11] },
-    { "type": "spawn", "unit": "SUPPORT", "location": [14, 11] },
-    { "type": "upgrade", "unit": "SUPPORT", "location": [14, 11] },
     { "type": "spawn", "unit": "SUPPORT", "location": [13, 10] },
     { "type": "upgrade", "unit": "SUPPORT", "location": [13, 10] },
     { "type": "spawn", "unit": "SUPPORT", "location": [14, 10] },
