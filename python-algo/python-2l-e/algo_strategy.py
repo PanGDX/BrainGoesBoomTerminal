@@ -305,12 +305,13 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def _build_random_turrets_fallback(self, game_state):
         """After all build/upgrade tiers complete, spend any leftover SP on
-        random turrets in the upper-half friendly diamond."""
+        random turrets — restricted to y in [11, 13] to match the curated
+        build-order's layout (no placements below y=11)."""
         turret_cost = game_state.type_cost(TURRET)[0]
-        upper_half = []
-        for cell in self.enumerate_friendly_side_locations(game_state):
-            if 8 <= cell[1] <= 13:
-                upper_half.append(cell)
+        upper_half = [
+            cell for cell in self.enumerate_friendly_side_locations(game_state)
+            if 11 <= cell[1] <= 13
+        ]
         attempts = 0
         max_attempts = 20
         while game_state.get_resource(SP) >= turret_cost and attempts < max_attempts:
