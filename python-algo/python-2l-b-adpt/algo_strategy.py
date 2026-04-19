@@ -112,8 +112,16 @@ class AlgoStrategy(gamelib.AlgoCore):
     def on_turn(self, turn_state):
         game_state = gamelib.GameState(self.config, turn_state)
         
-        self.parse_game_state(game_state)
-        self.starter_strategy(game_state)
+        try:
+            self.parse_game_state(game_state)
+        except Exception as e:
+            gamelib.debug_write(f"Exception caught in parse_game_state: {e}")
+
+        try:
+            self.starter_strategy(game_state)
+        except Exception as e:
+            gamelib.debug_write(f"Exception caught in starter_strategy: {e}")
+        
 
         game_state.submit_turn()
 

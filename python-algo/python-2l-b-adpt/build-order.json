@@ -15,12 +15,17 @@
   ],
   "sides":[
     { "type": "spawn", "unit": "WALL", "location": [0, 13] },
-    { "type": "spawn", "unit": "WALL", "location": [27, 13] }
-  ],
-  "frontline" : [
+    { "type": "spawn", "unit": "WALL", "location": [27, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [1, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [5, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [4, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [5, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [26, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [23, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [22, 13] },
+    { "type": "spawn", "unit": "TURRET", "location": [22, 12] }
+  ],
+  "frontline" : [
     { "type": "spawn", "unit": "TURRET", "location": [7, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [8, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [10, 13] },
@@ -28,10 +33,7 @@
     { "type": "spawn", "unit": "TURRET", "location": [16, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [17, 13] },
     { "type": "spawn", "unit": "TURRET", "location": [19, 13] },
-    { "type": "spawn", "unit": "TURRET", "location": [20, 13] },
-    { "type": "spawn", "unit": "TURRET", "location": [22, 13] },
-    { "type": "spawn", "unit": "TURRET", "location": [23, 13] },
-    { "type": "spawn", "unit": "TURRET", "location": [26, 13] }
+    { "type": "spawn", "unit": "TURRET", "location": [20, 13] }    
   ],
   "catchline": [
     { "type": "spawn", "unit": "TURRET", "location": [4, 12] },
@@ -54,7 +56,6 @@
     { "type": "spawn", "unit": "TURRET", "location": [20, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [21, 10] },
     { "type": "spawn", "unit": "TURRET", "location": [22, 10] },
-    { "type": "spawn", "unit": "TURRET", "location": [22, 11] },
     { "type": "spawn", "unit": "TURRET", "location": [22, 12] },
     { "type": "spawn", "unit": "TURRET", "location": [23, 11] },
     { "type": "spawn", "unit": "TURRET", "location": [23, 12] }
