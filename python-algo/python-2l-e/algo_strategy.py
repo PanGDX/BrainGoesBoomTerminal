@@ -461,67 +461,91 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def find_best_scout_spawn(self, game_state):
         """
-        Calculates the safest route to the enemy edge.
-        Primary Objective: STRICTLY minimize damage taken.
-        Secondary Objective: If multiple paths take the exact same minimal damage, 
-                             pick the one that hits the most exposed supports.
+        Pick the scout spawn. If any path can destroy at least one enemy support
+        this turn (simulated), prefer it (damage-min, supports-desc tie-break).
+        Otherwise, pick the path with minimum HP-weighted enemy firepower —
+        turrets at low HP are discounted since they die before finishing firing.
         """
         friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + \
                          game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
-
         deploy_locations = [loc for loc in friendly_edges if not game_state.contains_stationary_unit(loc)]
         default_corners = [[13, 0], [14, 0]]
-        
         if not deploy_locations:
             return random.choice(default_corners), float('inf')
 
         turret_damage = gamelib.GameUnit(TURRET, game_state.config).damage_i
-        enemy_supports = self._enemy_support_locations(game_state)
+        scout_hp = gamelib.GameUnit(SCOUT, game_state.config).max_health
+        scout_tower_dmg = gamelib.GameUnit(SCOUT, game_state.config).damage_f
+        support_hp = gamelib.GameUnit(SUPPORT, game_state.config).max_health
         SCOUT_ATTACK_RANGE = gamelib.GameUnit(SCOUT, game_state.config).attackRange
+
+        mp = int(game_state.get_resource(MP))
+        total_scout_hp = mp * scout_hp
+        enemy_supports = self._enemy_support_locations(game_state)
 
         valid_paths = []
 
         for loc in deploy_locations:
             path = game_state.find_path_to_edge(loc)
-            
-            # ISSUE 1 FIX: If the path ends on our half of the board (y < 13), 
-            # the troop is stuck and will self-destruct. Discard this location.
             if not path or path[-1][1] < 13:
-                continue
-                
+                continue  # dead-end
+
             damage_taken = 0
+            damage_taken_weighted = 0.0  # weighted by attacker HP fraction
             supports_hit = set()
+            # For each support, accumulate scout damage dealt across path cells in range.
+            support_damage = {}
 
             for path_location in path:
                 attackers = game_state.get_attackers(path_location, 0)
                 damage_taken += len(attackers) * turret_damage
-                
-                for sx, sy, upgraded in enemy_supports:
-                    if (sx, sy) in supports_hit:
-                        continue
-                    # Check if support is within scout's attack range
-                    if math.sqrt((path_location[0] + 0.5 - (sx + 0.5))**2 + (path_location[1] + 0.5 - (sy + 0.5))**2) <= SCOUT_ATTACK_RANGE:
+                for a in attackers:
+                    hp_frac = (a.health / a.max_health) if a.max_health else 0
+                    damage_taken_weighted += turret_damage * hp_frac
+
+                for sx, sy, _upgraded in enemy_supports:
+                    if math.sqrt(
+                        (path_location[0] + 0.5 - (sx + 0.5)) ** 2
+                        + (path_location[1] + 0.5 - (sy + 0.5)) ** 2
+                    ) <= SCOUT_ATTACK_RANGE:
                         supports_hit.add((sx, sy))
+                        # Surviving-scout estimate: fraction of scouts still alive at this cell.
+                        # Coarse: linear decay proportional to cumulative damage_taken.
+                        survive_frac = max(0.0, 1.0 - damage_taken / max(total_scout_hp, 1))
+                        support_damage[(sx, sy)] = support_damage.get((sx, sy), 0) + \
+                                                    mp * survive_frac * scout_tower_dmg
+
+            can_destroy_support = any(dmg >= support_hp for dmg in support_damage.values())
 
             valid_paths.append({
                 'loc': loc,
                 'damage': damage_taken,
-                'supports': len(supports_hit)
+                'damage_weighted': damage_taken_weighted,
+                'supports': len(supports_hit),
+                'can_destroy': can_destroy_support,
             })
 
-        # ISSUE 2 & 3 FIX: Separate pure rushing from support hunting.
-        if valid_paths:
-            # We sort the list of valid paths. 
-            # 1st Priority: 'damage' ascending (Always prefer lowest damage).
-            # 2nd Priority: '-supports' ascending (which means supports descending, to break ties).
-            valid_paths.sort(key=lambda p: (p['damage'], -p['supports']))
-            
-            best_path = valid_paths[0]
-            return best_path['loc'], best_path['damage']
+        if not valid_paths:
+            valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
+            return random.choice(valid_corners or default_corners), float('inf')
 
-        # Fallback: Every single edge location is blocked/stuck.
-        valid_corners = [c for c in default_corners if not game_state.contains_stationary_unit(c)]
-        return random.choice(valid_corners or default_corners), float('inf')
+        kill_paths = [p for p in valid_paths if p['can_destroy']]
+        if kill_paths:
+            # Can destroy ≥1 support this turn: damage-min, supports-desc tie-break.
+            kill_paths.sort(key=lambda p: (p['damage'], -p['supports']))
+            best = kill_paths[0]
+            gamelib.debug_write(
+                f"SCOUT-KILL path: loc={best['loc']} dmg={best['damage']} supports={best['supports']}"
+            )
+        else:
+            # No support-kill possible: choose minimum HP-weighted firepower.
+            valid_paths.sort(key=lambda p: p['damage_weighted'])
+            best = valid_paths[0]
+            gamelib.debug_write(
+                f"SCOUT-SAFE path: loc={best['loc']} dmg={best['damage']} "
+                f"hp-weighted={best['damage_weighted']:.1f}"
+            )
+        return best['loc'], best['damage']
 
 
     def spawn_interceptor(self, game_state, location, number):
